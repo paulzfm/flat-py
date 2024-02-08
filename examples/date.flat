@@ -1,0 +1,21 @@
+lang Date {
+    start: year "-" month "-" day;
+    year: Digit{4};
+    month: Digit{2};
+    day: Digit{2};
+}
+
+fun year_of(date: Date): string = select(date, @Date:/start)
+
+fun is_leap_year(y: int): bool =
+    if y % 100 == 0 then y % 400 == 0 else y % 4 == 0
+
+method check_is_leap_year(date: Date): (b: bool)
+  ensures b == is_leap_year(int(year_of(date)))
+{
+    year = int(substring(date, 0, 4));
+    if year % 100 == 0 {
+        return year % 400 == 0;
+    }
+    return year % 4 == 0;
+}

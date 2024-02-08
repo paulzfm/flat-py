@@ -1,0 +1,2 @@
+class LangInfo:
+    pass
