@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
-from flat.compiler.trees import Stmt
 from flat.compiler.printer import quote
+from flat.compiler.trees import Stmt
 
 
 class Value:
@@ -29,13 +29,18 @@ class Nothing(Value):
 
 
 @dataclass
+class ListValue(Value):
+    values: list[Value]
+
+
+@dataclass
 class Callable(Value):
     name: str
     param_names: list[str]
     body: list[Stmt]
 
 
-def pretty_print_value(value: Value) -> str:
+def pretty_value(value: Value) -> str:
     match value:
         case IntValue(n):
             return str(n)
@@ -47,5 +52,7 @@ def pretty_print_value(value: Value) -> str:
             return quote(s)
         case Nothing():
             return 'none'
+        case ListValue(values):
+            return '[' + ', '.join([pretty_value(v) for v in values]) + ']'
         case Callable(name):
             return f'<function {name}>'

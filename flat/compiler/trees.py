@@ -1,8 +1,12 @@
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Optional
 
-from flat.compiler.lang_info import LangInfo
-from flat.compiler.pos import Pos
+
+@dataclass
+class Pos:
+    line: int
+    column: int
 
 
 class Tree:
@@ -21,6 +25,12 @@ class Clause(Tree):
 @dataclass
 class Token(Clause):
     text: str
+
+
+@dataclass
+class CharSet(Clause):
+    begin: int
+    end: int
 
 
 @dataclass
@@ -62,6 +72,11 @@ class SimpleType(Type):
 
 
 @dataclass
+class TopType(SimpleType):
+    pass
+
+
+@dataclass
 class IntType(SimpleType):
     pass
 
@@ -79,22 +94,6 @@ class StringType(SimpleType):
 @dataclass
 class UnitType(SimpleType):
     pass
-
-
-class LangInfo:
-    def is_valid_path(self, path: list[str], is_abs: bool) -> bool:
-        return True
-
-
-@dataclass
-class LangType(SimpleType):
-    name: str
-    info: LangInfo
-
-
-@dataclass
-class SelectorType(SimpleType):
-    of: LangType
 
 
 @dataclass
@@ -145,13 +144,6 @@ class Literal(Expr):
 
 
 @dataclass
-class Selector(Expr):
-    lang: str
-    is_absolute: bool
-    path: list[str]
-
-
-@dataclass
 class Var(Expr):
     name: str
 
@@ -175,6 +167,21 @@ def infix(op: str, lhs: Expr, rhs: Expr) -> App:
 
 
 @dataclass
+class InLang(Expr):
+    receiver: Expr
+    lang_name: str
+
+
+@dataclass
+class Select(Expr):
+    receiver: Expr
+    select_all: bool
+    lang_name: str
+    path_is_absolute: bool
+    path: list[str]
+
+
+@dataclass
 class Lambda(Expr):
     params: list[str]
     body: Expr
@@ -189,15 +196,27 @@ class IfThenElse(Expr):
 
 def subst_expr(expr: Expr, mappings: dict[str, Expr], closed: frozenset[str] = frozenset()) -> Expr:
     match expr:
-        case Var(x) if x in mappings and x not in closed:
-            return mappings[x]
+        case Literal():
+            return expr
+        case Var(x):
+            return mappings[x] if x in mappings and x not in closed else expr
         case App(e, es):
             return App(subst_expr(e, mappings, closed),
                        [subst_expr(e, mappings, closed) for e in es])
         case Lambda(xs, e):
             return Lambda(xs, subst_expr(e, mappings, closed | frozenset(x.name for x in xs)))
+        case InLang(e, lang):
+            return InLang(subst_expr(e, mappings, closed), lang)
+        case Select(e) as node:
+            copied = deepcopy(node)
+            copied.receiver = subst_expr(e, mappings, closed)
+            return copied
+        case IfThenElse(e, e1, e2):
+            return IfThenElse(subst_expr(e, mappings, closed),
+                              subst_expr(e1, mappings, closed),
+                              subst_expr(e2, mappings, closed))
         case other:
-            return other
+            raise NotImplementedError(f'subst {other}')
 
 
 # --- Statements ---

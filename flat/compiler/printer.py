@@ -46,7 +46,7 @@ class IndentPrinter:
 infix_ops = {'+', '-', '*', '/', '%', '==', '!=', '>=', '<=', '>', '<', '&&', '||'}
 
 
-def pretty_print_tree(tree: Tree | list[Tree], spaces: int = 4) -> str:
+def pretty_tree(tree: Tree | list[Tree], spaces: int = 4) -> str:
     to = IndentPrinter(spaces)
 
     def print_group(elements: list[Tree | str]):
@@ -97,12 +97,16 @@ def pretty_print_tree(tree: Tree | list[Tree], spaces: int = 4) -> str:
     def print_tree(node: Tree):
         match node:
             # types
+            case TopType():
+                to.write('Any')
             case IntType():
                 to.write('int')
             case BoolType():
                 to.write('bool')
             case StringType():
                 to.write('string')
+            case UnitType():
+                to.write('unit')
             case ListType(elem):
                 to.write('[')
                 print_tree(elem)
@@ -144,6 +148,16 @@ def pretty_print_tree(tree: Tree | list[Tree], spaces: int = 4) -> str:
                     case _:
                         print_tree(fun)
                         print_group(args)
+            case InLang(receiver, lang_name):
+                print_tree(receiver)
+                to.write(f' in {lang_name}')
+            case Select(receiver, select_all, lang_name, is_abs, path):
+                print_tree(receiver)
+                to.write(' @* ' if select_all else ' @ ')
+                to.write(f'{lang_name}:')
+                if is_abs:
+                    to.write('/')
+                to.write('/'.join(path))
             case Lambda(params, body):
                 if len(params) == 1:
                     to.write(params[0])
@@ -151,6 +165,13 @@ def pretty_print_tree(tree: Tree | list[Tree], spaces: int = 4) -> str:
                     print_group(params)
                 to.write(' -> ')
                 print_tree(body)
+            case IfThenElse(cond, then_branch, else_branch):
+                to.write('if ')
+                print_tree(cond)
+                to.write(' then ')
+                print_tree(then_branch)
+                to.write(' else ')
+                print_tree(else_branch)
             # statements
             case Assign(var, value, type_annot):
                 to.write(var)
@@ -213,6 +234,8 @@ def pretty_print_tree(tree: Tree | list[Tree], spaces: int = 4) -> str:
                 to.write(f'type {name} = ')
                 print_tree(body)
                 to.write_line()
+            case LangDef(name, _):
+                to.write(f'lang {name}')
             case FunDef(name, params, return_annot, value):
                 to.write(f'fun {name}')
                 print_group(params)

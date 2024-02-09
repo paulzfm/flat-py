@@ -68,7 +68,8 @@ ident = skip_whitespaces >> seq(ident_start, ident_rest.many()).combine(make_str
 # parsers
 
 clause = forward_declaration()
-clause_term = string_lit.map(Token) | ident.map(Symbol) | paren(clause)
+char_set = bracket(seq(normal_char.map(ord), token('-') >> normal_char.map(ord))).combine(CharSet)
+clause_term = string_lit.map(Token) | char_set | ident.map(Symbol) | paren(clause)
 rep_range = alt(token('*').result((0, None)),
                 token('+').result((1, None)),
                 token('?').result((0, 1)),
@@ -96,14 +97,16 @@ expr = forward_declaration()
 refinement_type = brace(seq(typ, token('|') >> expr)).combine(RefinementType)
 typ.become(simple_type | ident.map(NamedType) | refinement_type)
 
-path = ident.sep_by(token('/'), min=1)
-is_abs = token('/').optional().map(lambda tk: tk is not None)
-selector = token('@') >> seq(ident, token(':') >> is_abs, path).combine(Selector)
-literal = (integer | boolean | string_lit).map(Literal) | selector
-
+literal = (integer | boolean | string_lit).map(Literal)
 if_expr = token('if') >> seq(expr, token('then') >> expr, token('else') >> expr).combine(IfThenElse)
 lambda_params = ident.map(lambda x: [x]) | paren(ident.sep_by(comma))
 lambda_expr = seq(lambda_params, token('->') >> expr).combine(Lambda)
+
+is_all = token('@*').result(True) | token('@').result(False)
+is_abs = token('/').optional().map(lambda tk: tk is not None)
+path = ident.sep_by(token('/'), min=1)
+select = seq(is_all, ident, token(':') >> is_abs, path).combine(
+    lambda mode, lang, p_mode, p: lambda e: Select(e, mode, lang, p_mode, p))
 
 
 def prefix_parser(*ops: str) -> Parser:
@@ -120,7 +123,10 @@ expr.become(lambda_expr | if_expr | expr_parser(literal | ident.map(Var) | paren
     Prefix(prefix_parser('-')),
     InfixL(infix_parser('*', '/', '%')),
     InfixL(infix_parser('+', '-')),
-    InfixL(infix_parser('==', '!=', '>=', '<=', '>', '<')),
+    Postfix(select.map(lambda f: lambda e: f(e))),
+    Postfix(token('in') >> ident.map(lambda lang: lambda e: InLang(e, lang))),
+    InfixL(infix_parser('>=', '<=', '>', '<')),
+    InfixL(infix_parser('==', '!=')),
     Prefix(prefix_parser('!')),
     InfixL(infix_parser('&&')),
     InfixL(infix_parser('||')),
@@ -133,6 +139,7 @@ body = brace(stmt.many())
 return_stmt = token('return') >> expr.optional(default=None).map(Return) << token(';')
 if_stmt = token('if') >> seq(expr, body, (token('else') >> body).optional(default=[])).combine(If)
 while_stmt = token('while') >> seq(expr, body).combine(While)
+assert_stmt = token('assert') >> expr.map(Assert) << token(';')
 
 just_call = token('call') >> seq(ident, paren(expr.sep_by(comma))).combine(Call) << token(';')
 type_annot = (token(':') >> typ).optional(default=None)
@@ -142,7 +149,7 @@ call_and_assign = seq(ident, type_annot, token('=') >> just_call).combine(
 call_stmt = just_call | call_and_assign
 assign_stmt = seq(ident, type_annot, token('=') >> expr).combine(lambda x, a, e: Assign(x, e, a)) << token(';')
 
-stmt.become(return_stmt | if_stmt | while_stmt | call_stmt | assign_stmt)
+stmt.become(return_stmt | if_stmt | while_stmt | assert_stmt | call_stmt | assign_stmt)
 
 lang_def = token('lang') >> seq(ident, brace(rule.many())).combine(LangDef)
 type_alias = token('type') >> seq(ident, token('=') >> typ).combine(TypeAlias)

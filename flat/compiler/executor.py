@@ -1,23 +1,24 @@
 import sys
 from typing import Tuple
 
-from flat.compiler.values import *
-from flat.compiler.trees import *
 from flat.compiler import predef
-from flat.compiler.printer import pretty_print_tree
+from flat.compiler.grammar import LangObject
+from flat.compiler.printer import pretty_tree
+from flat.compiler.trees import *
+from flat.compiler.values import *
 
 
 class StackFrame:
     def __init__(self):
         self._values: dict[str, Value] = {}
 
-    def __contains__(self, name: str):
+    def __contains__(self, name: str) -> bool:
         return name in self._values
 
-    def get_value(self, name: str):
+    def get_value(self, name: str) -> Value:
         return self._values[name]
 
-    def put_value(self, name: str, value: Value):
+    def put_value(self, name: str, value: Value) -> None:
         self._values[name] = value
 
     @property
@@ -28,6 +29,7 @@ class StackFrame:
 class Executor:
     def __init__(self, debug: bool = False):
         self._functions: dict[str, Callable] = {}
+        self._languages: dict[str, LangObject] = {}
         self._call_stack: list[StackFrame] = []
         self._debug = debug
 
@@ -45,8 +47,8 @@ class Executor:
 
     def load(self, tree: Def) -> None:
         match tree:
-            case LangDef():
-                pass
+            case LangDef(name, rules):
+                self._languages[name] = LangObject(name, rules)
             case TypeAlias():
                 pass
             case FunDef(name, params, _, value):
@@ -62,6 +64,7 @@ class Executor:
             frame.put_value(x, v)
         # execute body
         return_value = self.exec(fun_obj.body)
+        self._call_stack.pop()
         if return_value:
             return return_value
         else:
@@ -83,43 +86,38 @@ class Executor:
                             pass
                         case BoolValue(False):
                             note = ('Note: local variables: ' +
-                                    ', '.join([f'{x}={pretty_print_value(v)}' for x, v in self._top_frame.all_values]))
-                            self._abort('Assertion failure', pretty_print_tree(cond), note)
+                                    ', '.join([f'{x}={pretty_value(v)}' for x, v in self._top_frame.all_values]))
+                            self._abort('Assertion failure', pretty_tree(cond), note)
                         case v:
-                            self._abort(f'illegal value: {pretty_print_value(v)}', pretty_print_tree(cond))
+                            self._abort(f'illegal value: {pretty_value(v)}', pretty_tree(cond))
                 case Return(None):
-                    self._call_stack.pop()
                     return Nothing()
                 case Return(value):
                     return_value = self.eval(value)
-                    self._call_stack.pop()
                     return return_value
                 case If(cond, then_body, else_body):
                     match self.eval(cond):
                         case BoolValue(True):
                             return_value = self.exec(then_body)
                             if return_value:
-                                self._call_stack.pop()
                                 return return_value
                         case BoolValue(False):
                             return_value = self.exec(else_body)
                             if return_value:
-                                self._call_stack.pop()
                                 return return_value
                         case v:
-                            self._abort(f'illegal value: {pretty_print_value(v)}', pretty_print_tree(cond))
+                            self._abort(f'illegal value: {pretty_value(v)}', pretty_tree(cond))
                 case While(cond, body):
                     while True:
                         match self.eval(cond):
                             case BoolValue(True):
                                 return_value = self.exec(body)
                                 if return_value:
-                                    self._call_stack.pop()
                                     return return_value
                             case BoolValue(False):
                                 break  # loop terminates
                             case v:
-                                self._abort(f'illegal value: {pretty_print_value(v)}', pretty_print_tree(cond))
+                                self._abort(f'illegal value: {pretty_value(v)}', pretty_tree(cond))
                 case _:
                     raise RuntimeError
 
@@ -134,7 +132,9 @@ class Executor:
                     case str() as s:
                         return StringValue(s)
             case Var(name):
-                return self._top_frame.get_value(name)
+                if name in self._top_frame:
+                    return self._top_frame.get_value(name)
+                self._abort(f'undefined name: {name}', pretty_tree(expr))
             case Lambda(params, body):
                 return Callable('<lambda>', params, [Return(body)])
             case App(fun, args):
@@ -148,15 +148,34 @@ class Executor:
                                         case Callable() as c:
                                             return self.call(c, arg_values)
                                         case v:
-                                            self._abort(f'illegal value: {pretty_print_value(v)}',
-                                                        pretty_print_tree(fun))
+                                            self._abort(f'illegal value: {pretty_value(v)}',
+                                                        pretty_tree(fun))
 
                                 if f in self._functions:
                                     return self.call(self._functions[f], arg_values)
 
-                                self._abort(f'undefined name: {f}', pretty_print_tree(fun))
+                                self._abort(f'undefined name: {f}', pretty_tree(fun))
                             case value:
                                 return value
+            case InLang(receiver, lang_name):
+                match self.eval(receiver):
+                    case StringValue(s):
+                        return BoolValue(s in self._languages[lang_name])
+                    case v:
+                        self._abort(f'illegal value: {pretty_value(v)}',
+                                    pretty_tree(receiver))
+            case Select(receiver, select_all, lang_name, is_abs, path):
+                match self.eval(receiver):
+                    case StringValue(word):
+                        lang = self._languages[lang_name]
+                        if select_all:
+                            values = [StringValue(s) for s in lang.select_all(word, path, is_abs)]
+                            return ListValue(values)
+                        else:
+                            return StringValue(lang.select_unique(word, path, is_abs))
+                    case v:
+                        self._abort(f'illegal value: {pretty_value(v)}',
+                                    pretty_tree(receiver))
             case IfThenElse(cond, then_branch, else_branch):
                 match self.eval(cond):
                     case BoolValue(True):
@@ -164,7 +183,7 @@ class Executor:
                     case BoolValue(False):
                         return self.eval(else_branch)
                     case v:
-                        self._abort(f'illegal value: {pretty_print_value(v)}', pretty_print_tree(cond))
+                        self._abort(f'illegal value: {pretty_value(v)}', pretty_tree(cond))
             case _:
                 raise RuntimeError
 

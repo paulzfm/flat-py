@@ -2,9 +2,10 @@ import os
 import sys
 
 from flat.compiler.executor import Executor
-from flat.compiler.instrument import Instrumentor
+from flat.compiler.instrumentor import Instrumentor
 from flat.compiler.parser import parse_program
-from flat.compiler.values import pretty_print_value
+from flat.compiler.printer import pretty_tree
+from flat.compiler.values import pretty_value
 
 
 def compile_source(file_path: str):
@@ -18,9 +19,10 @@ def compile_source(file_path: str):
     program = parse_program(code)
     instrumentor = Instrumentor()
     instrumentor.instrument(program)
+    print(pretty_tree(program))
     executor = Executor(debug=True)
     value = executor.run(program)
-    print(f'Out: {pretty_print_value(value)}')
+    print(f'Out: {pretty_value(value)}')
 
 
 def print_usage():

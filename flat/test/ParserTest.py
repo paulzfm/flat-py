@@ -36,11 +36,15 @@ class ParserTest(unittest.TestCase):
         self.assertEqual(Literal(23), expr.parse('23'))
         self.assertEqual(Literal(False), expr.parse('false'))
         self.assertEqual(Literal('ok'), expr.parse('"ok"'))
-        self.assertEqual(Selector('URL', True, ['local']), expr.parse('@URL:/local'))
+
+    def test_parse_in_lang(self):
+        self.assertEqual(InLang(Var('url'), 'URL'), expr.parse('url in URL'))
 
     def test_parse_select(self):
-        self.assertEqual(apply('select', Var('url'), Selector('URL', False, ['local'])),
-                         expr.parse('select(url, @URL:local)'))
+        self.assertEqual(Select(Var('url'), False, 'URL', True, ['local']),
+                         expr.parse('url @ URL:/local'))
+        self.assertEqual(Select(Var('arr'), True, 'JSON', False, ['array', 'element']),
+                         expr.parse('arr @* JSON:array/element'))
 
     def test_parse_unary_expressions(self):
         self.assertEqual(prefix('-', prefix('-', Var('n'))),
@@ -96,8 +100,8 @@ class ParserTest(unittest.TestCase):
         n_le_10 = apply('<=', Var('n'), Literal(10))
         self.assertEqual(While(n_le_10, [Assign('n', apply('+', Var('n'), Literal(1)))]),
                          stmt.parse('while n <= 10 { n = n + 1; }'))
-        self.assertEqual(While(Literal(True), []),
-                         stmt.parse('while true {}'))
+        self.assertEqual(While(Literal(True), [Assert(Literal(True))]),
+                         stmt.parse('while true { assert true; }'))
 
     def test_parse_assignments_with_type_annot(self):
         gt_zero = apply('>', Var('_'), Literal(0))

@@ -1,6 +1,36 @@
-from flat.compiler.printer import pretty_print_tree
-from flat.compiler.scope import NormalForm, Scope
+from flat.compiler import predef
+from flat.compiler.printer import pretty_tree
 from flat.compiler.trees import *
+
+NormalForm = SimpleType | RefinementType
+
+
+class Scope:
+    def __init__(self, parent: Optional = None):
+        self.parent: Optional[Scope] = parent
+        self._terms: dict[str, NormalForm] = {}
+        self._types: dict[str, NormalForm] = {}
+
+    def lookup_term(self, name: str) -> Optional[NormalForm]:
+        if name in self._terms:
+            return self._terms[name]
+        if self.parent:
+            return self.parent.lookup_term(name)
+
+    def lookup_type(self, name: str) -> Optional[NormalForm]:
+        if name in self._types:
+            return self._types[name]
+        if self.parent:
+            return self.parent.lookup_type(name)
+
+    def has_defined(self, name: str) -> bool:
+        return name in self._terms or name in self._types
+
+    def update_term(self, name: str, typ: NormalForm) -> None:
+        self._terms[name] = typ
+
+    def update_type(self, name: str, typ: NormalForm) -> None:
+        self._types[name] = typ
 
 
 def get_base_type(nf: NormalForm) -> SimpleType:
@@ -52,18 +82,10 @@ def infer(expr: Expr, scope: Scope) -> SimpleType:
                     return BoolType()
                 case str():
                     return StringType()
-        case Selector(lang, is_abs, path):
-            match scope.lookup_type(lang):
-                case None:
-                    raise TypeError(f'undefined name: {lang}')
-                case LangType(_, info) as lt:
-                    return SelectorType(lt)
-                case _:
-                    raise TypeError(f'not a lang type: {lang}')
         case Var(name):
             match scope.lookup_term(name):
                 case None:
-                    match get_builtin_fun_type(name):
+                    match predef.typ(name):
                         case None:
                             raise TypeError(f'undefined name: {name}')
                         case t:
@@ -71,21 +93,6 @@ def infer(expr: Expr, scope: Scope) -> SimpleType:
                 case nf:
                     return get_base_type(nf)
         case App(fun, args):
-            if isinstance(fun, Var) and fun.name == 'select':  # select
-                match args:
-                    case [receiver, selector]:
-                        match infer(receiver, scope), infer(selector, scope):
-                            case (LangType() as t1, SelectorType(t2)):
-                                if t1 == t2:
-                                    return StringType()
-                                else:
-                                    raise TypeError
-                            case _:
-                                raise TypeError
-                    case _:
-                        raise TypeError
-
-            # else: a normal function application
             match infer(fun, scope):
                 case FunType(arg_types, return_type):
                     if len(arg_types) != len(args):
@@ -93,32 +100,26 @@ def infer(expr: Expr, scope: Scope) -> SimpleType:
                     for te, e in zip(arg_types, args):
                         ensure(e, te, scope)
                     return return_type
-                case OverloadFunType(options):
-                    for option in options:
-                        arg_types = option.args
-                        if len(arg_types) != len(args):
-                            continue  # try the next one=
-                        success = True
-                        for te, e in zip(arg_types, args):
-                            if check(e, te, scope) is not None:  # failure
-                                success = False
-                                break
-                        if success:
-                            return option.returns
-                        # else: try the next one
-                    # all options failed
-                    raise TypeError
                 case other:
-                    raise TypeError(f'expect fun type, but found {other}')
+                    raise TypeError(f'expect fun type, but found {pretty_tree(other)}')
+        case InLang(receiver, lang_name):
+            ensure(receiver, StringType(), scope)
+            ensure_lang(lang_name, scope)
+        case Select(receiver, select_all, lang_name, absolute_path, path):
+            ensure(receiver, StringType(), scope)
+            ensure_lang(lang_name, scope)
+            # TODO: check path
+            return ListType(StringType()) if select_all else StringType()
         case IfThenElse(cond, then_branch, else_branch):
             ensure(cond, BoolType(), scope)
             t = infer(then_branch, scope)
             ensure(else_branch, t, scope)
+            return t
         case other:
-            raise TypeError(f'cannot infer type for {other}')
+            raise TypeError(f'cannot infer type for: {pretty_tree(other)}')
 
 
-def check(expr: Expr, expected: SimpleType, scope: Scope) -> Optional[SimpleType | str]:
+def ensure(expr: Expr, expected: SimpleType, scope: Scope) -> None:
     match expr:
         case Lambda(params, body):
             match expected:
@@ -128,79 +129,41 @@ def check(expr: Expr, expected: SimpleType, scope: Scope) -> Optional[SimpleType
                         if formal_scope.has_defined(x):
                             raise TypeError(f'redefined lambda param {x}')
                         formal_scope.update_term(x, t)
-                    match check(body, return_type, formal_scope):
-                        case None:
-                            return None
-                        case body_actual:
-                            return FunType(arg_types, body_actual)
-
+                    ensure(body, return_type, formal_scope)
                 case _:
-                    return 'fun type'
+                    raise TypeError(f'lambda expression cannot have non-function type')
         case IfThenElse(cond, then_branch, else_branch):
             ensure(cond, BoolType(), scope)
-            match check(then_branch, expected, scope):
-                case None:
-                    match check(else_branch, expected, scope):
-                        case None:
-                            return None
-                        case body_actual:
-                            return body_actual
-                case body_actual:
-                    return body_actual
+            ensure(then_branch, expected, scope)
+            ensure(else_branch, expected, scope)
         case other:  # fall back to infer mode
             actual = infer(other, scope)
             if is_subtype(actual, expected):
-                return None
-            return actual
+                pass
+            else:
+                raise TypeError(f'expect {pretty_tree(expected)}, but found {pretty_tree(actual)}')
 
 
 def is_subtype(lower: SimpleType, upper: SimpleType) -> bool:
     if lower == upper:
         return True
+
     match lower, upper:
-        case (LangType(), StringType()):
+        case (_, TopType()):
             return True
-    return False
-
-
-def ensure(expr: Expr, expected: SimpleType, scope: Scope) -> None:
-    assert isinstance(expected, SimpleType)
-    match check(expr, expected, scope):
-        case None:
-            pass
-        case actual:
-            raise TypeError(f'expect {pretty_print_tree(expected)}, but found {pretty_print_tree(actual)}')
-
-
-def get_builtin_fun_type(name: str) -> Optional[SimpleType]:
-    match name:
-        case 'prefix_-':
-            return FunType([IntType()], IntType())
-        case 'prefix_!':
-            return FunType([BoolType()], BoolType())
-        case '+':
-            return OverloadFunType([
-                FunType([IntType(), IntType()], IntType()),
-                FunType([StringType(), StringType()], StringType())
-            ])
-        case '-' | '*' | '/' | '%':
-            return FunType([IntType(), IntType()], IntType())
-        case '==' | '!=':
-            return OverloadFunType([
-                FunType([IntType(), IntType()], BoolType()),
-                FunType([BoolType(), BoolType()], BoolType()),
-                FunType([StringType(), StringType()], BoolType())
-            ])
-        case '>=' | '<=' | '>' | '<':
-            return OverloadFunType([
-                FunType([IntType(), IntType()], BoolType()),
-                FunType([StringType(), StringType()], BoolType())
-            ])
-        case '&&' | '||':
-            return FunType([BoolType(), BoolType()], BoolType())
-        case 'substring':
-            return FunType([StringType(), IntType(), IntType()], StringType())
-        case 'int':
-            return FunType([StringType()], IntType())
+        case (ListType(t1), ListType(t2)):
+            return is_subtype(t1, t2)
+        case (FunType(ts1, t1), FunType(ts2, t2)) if len(ts1) == len(ts2):
+            return is_subtype(t1, t2) and all([is_subtype(y, x) for x, y in zip(ts1, ts2)])
         case _:
-            return None
+            return False
+
+
+def ensure_lang(name: str, scope) -> None:
+    match scope.lookup_type(name):
+        case None:
+            raise TypeError(f'undefined name {name}')
+        case RefinementType(StringType(), _):
+            pass
+        case other:
+            raise TypeError(f'expect lang, but found {pretty_tree(other)}')
