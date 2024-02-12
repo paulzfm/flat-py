@@ -1,4 +1,5 @@
-from typing import Optional
+from functools import reduce
+from typing import Optional, Literal
 
 from isla.derivation_tree import DerivationTree
 from isla.helpers import is_valid_grammar
@@ -65,13 +66,66 @@ class Converter:
 
 class LangObject:
     name: str
-    rules: list[Rule]
+    rules: list[Rule]  # TODO: remove
+    clauses: dict[str, Clause]
 
     def __init__(self, name: str, rules: list[Rule]):
         self.name = name
         self.rules = rules
+        self.clauses = {}
+        for rule in rules:
+            self.clauses[rule.name] = rule.body
         self._solver_volume: int = 10
         self._isla_solver: Optional[ISLaSolver] = None
+
+    @property
+    def defined_symbols(self) -> frozenset[str]:
+        return frozenset(self.clauses.keys())
+
+    def count(self, target: str, clause: Clause | str, direct: bool) -> Literal[0, 1, 2]:
+        """Count how many times a `target` nonterminal can appear in a parse tree derived from `clause`.
+        If `direct` is set, only consider the direct children; otherwise the full tree.
+        Return:
+        - 0 if `target` does not appear on all trees;
+        - 1 if `target` appears exactly once on all trees;
+        - 2 if either `target` appears multiple times or undetermined.
+        """
+
+        def acc(n1: Literal[0, 1, 2], n2: Literal[0, 1, 2]) -> Literal[0, 1, 2]:
+            """Addition of times: min(2, n1 + n2)."""
+            match n1 + n2:
+                case 0:
+                    return 0
+                case 1:
+                    return 1
+                case _:
+                    return 2
+
+        if isinstance(clause, str):
+            clause = self.clauses[clause]
+
+        match clause:
+            case Symbol(name):
+                n: Literal[0, 1, 2] = 1 if name == target else 0
+                if not direct:
+                    n = acc(n, self.count(target, self.clauses[name], direct))
+                return n
+            case Rep(clause, at_least, at_most):
+                if at_most == 0:
+                    return 0
+                n = self.count(target, clause, direct)
+                if n == 0:
+                    return 0
+                if at_least == at_most == 1:
+                    return n
+                return 2
+            case Seq(clauses):
+                return reduce(acc, [self.count(target, clause, direct) for clause in clauses])
+            case Alt(clauses):
+                return reduce(lambda v1, v2: v1 if v1 == v2 else 2,
+                              [self.count(target, clause, direct) for clause in clauses])
+            case _:  # terminal clause
+                return 0
 
     @property
     def isla_solver(self) -> ISLaSolver:
