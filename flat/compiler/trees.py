@@ -1,14 +1,9 @@
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Optional, Callable, Tuple
 
-
-@dataclass
-class Pos:
-    """A position in source file that consists of a starting and ending point, both inclusive.
-    Each point is a zero-based coordinate (row, offset in row)."""
-    start: Tuple[int, int]
-    end: Tuple[int, int]
+from flat.compiler.errors import RuntimeTypeError
+from flat.compiler.pos import Pos
 
 
 class Tree:
@@ -325,6 +320,7 @@ class Call(Stmt):
 @dataclass
 class Assert(Stmt):
     cond: Expr
+    error_trigger: Optional[Tuple[list[str], Callable[[list[str]], RuntimeTypeError]]] = None
 
 
 @dataclass

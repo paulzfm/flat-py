@@ -23,7 +23,7 @@ method entry(): unit
 {
     b = call date_in_leap_year("2024-02-09");
     assert b;
-    b = call date_in_leap_year("1900:01-01");
+    b = call date_in_leap_year("1900-01-01");
     assert !b;
     return;
 }

@@ -1,10 +1,9 @@
 import sys
 
 from flat.compiler import predef
-from flat.compiler.errors import Error, RuntimeUnsat, AssertionFailure
+from flat.compiler.errors import Error, AssertionFailure
 from flat.compiler.grammar import LangObject
 from flat.compiler.issuer import Issuer
-from flat.compiler.printer import pretty_tree
 from flat.compiler.trees import *
 from flat.compiler.values import *
 
@@ -87,25 +86,19 @@ class Executor:
                     return_value = self.call(self._functions[method.name], arg_values)
                     if node.var:
                         self._top_frame.put_value(node.var.name, return_value)
-                case Assert(cond):
+                case Assert(cond) as node:
                     match self.eval(cond):
                         case BoolValue(True):
                             pass
                         case BoolValue(False):
-                            self.abort(AssertionFailure(stmt.pos))
+                            if node.error_trigger:
+                                model_vars, f = node.error_trigger
+                                model_values = [pretty_value(self._top_frame.get_value(x)) for x in model_vars]
+                                self.abort(f(model_values))
+                            else:
+                                self.abort(AssertionFailure(stmt.pos))
                         case v:
                             raise RuntimeError
-                case AssertSatisfy(cond, model_vars):
-                    match self.eval(cond):
-                        case BoolValue(True):
-                            pass
-                        case BoolValue(False):
-                            env = [(x, model_vars[x], pretty_value(self._top_frame.get_value(x)))
-                                   for x in model_vars]
-                            self.abort(RuntimeUnsat(pretty_tree(cond), env, stmt.pos))
-                        case _:
-                            raise RuntimeError
-                    pass
                 case Return(None):
                     return Nothing()
                 case Return(value):

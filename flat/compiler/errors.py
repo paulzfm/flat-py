@@ -1,7 +1,7 @@
 from dataclasses import dataclass
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Literal
 
-from flat.compiler.trees import Pos
+from flat.compiler.pos import Pos
 
 
 @dataclass
@@ -27,23 +27,23 @@ class UndefinedName(Error):
 
 class RedefinedName(Error):
     def __init__(self, conflict_with: str, pos: Pos):
-        super().__init__('Redefined name', pos, f'conflict with {conflict_with}')
+        super().__init__('Redefined name', pos, [f'conflict with {conflict_with}'])
 
 
 class ExpectSimpleType(Error):
     def __init__(self, pos: Pos):
-        super().__init__('Expect a simple type', pos, 'this type is not allowed here')
+        super().__init__('Expect a simple type', pos, ['this type is not allowed here'])
 
 
 class ArityMismatch(Error):
     def __init__(self, expected: int, actual: int, pos: Pos):
-        super().__init__('Arity mismatch', pos, [f'expect:    {expected} argument(s)'
+        super().__init__('Arity mismatch', pos, [f'expect:    {expected} argument(s)',
                                                  f'but given: {actual}'])
 
 
 class TypeMismatch(Error):
     def __init__(self, expected: str, actual: str, pos: Pos):
-        super().__init__('Type mismatch', pos, [f'expect:    {expected}'
+        super().__init__('Type mismatch', pos, [f'expect:    {expected}',
                                                 f'but found: {actual}'])
 
 
@@ -75,14 +75,22 @@ class UnusedRule(Error):
         super().__init__('Rule is defined but not used', pos, ['Hint: you may delete this rule'])
 
 
-class RuntimeUnsat(Error):
-    def __init__(self, cond: str, env: list[Tuple[str, Optional[str], str]], pos: Pos):
-        details = []
-        for name, note, value in env:
-            details.append((f'{name} ({note})' if note else name) + f' = {value}')
-        super().__init__(f'Condition "{cond}" is unsat', pos, details)
+class RuntimeTypeError(Error):
+    pass
 
 
-class AssertionFailure(Error):
+class RuntimeTypeMismatch(RuntimeTypeError):
+    def __init__(self, expected: str, actual_value: str, pos: Pos):
+        super().__init__('Type mismatch', pos, [f'expected type: {expected}',
+                                                f'actual value:  {actual_value}'])
+
+
+class SpecViolated(RuntimeTypeError):
+    def __init__(self, mode: Literal['Pre', 'Post'], cond: str, env_values: list[Tuple[str, str]], pos: Pos):
+        details = ['env'] + [f'{name} = {value}' for name, value in env_values]
+        super().__init__(f'{mode}-condition "{cond}" violated', pos, details)
+
+
+class AssertionFailure(RuntimeTypeError):
     def __init__(self, pos: Pos):
         super().__init__(f'Assertion failure', pos)

@@ -1,4 +1,5 @@
-from flat.compiler.errors import RedefinedName, UndefinedName, ArityMismatch, TypeMismatch
+from flat.compiler.errors import RedefinedName, UndefinedName, ArityMismatch, TypeMismatch, RuntimeTypeMismatch, \
+    SpecViolated
 from flat.compiler.issuer import Issuer
 from flat.compiler.printer import pretty_tree
 from flat.compiler.trees import *
@@ -194,11 +195,11 @@ class Instrumentor:
                     body += self.check_type(arg, x, t, scope)
                     new_args.append(Var(x).copy_pos(arg))
                 # check pre
-                model_vars = {}
-                for v, x in zip(new_args, m.param_names):
-                    model_vars[v.name] = x
+                model_vars = [x.name for x in new_args]
                 for cond in m.subst_pre_conditions(new_args):
-                    body += [AssertSatisfy(cond, model_vars).copy_pos(stmt)]
+                    body += [Assert(cond, (model_vars, lambda vs: SpecViolated('Pre', pretty_tree(cond),
+                                                                               zip(model_vars, vs),
+                                                                               stmt.pos)))]
                 # call
                 body += [Call(method, new_args, var=node.var).copy_pos(stmt)]
                 # check return type
@@ -232,8 +233,11 @@ class Instrumentor:
                 body += self.check_type(value, return_var, this_method.return_type, scope)  # check type
                 # check post condition
                 return_value = Var(return_var)
+                model_vars = this_method.param_names + [return_var]
                 for cond in this_method.subst_post_conditions(this_method.formal_args + [return_value]):
-                    body += [AssertSatisfy(cond, {return_var: 'return value'}).copy_pos(value)]
+                    body += [Assert(cond, (model_vars, lambda vs: SpecViolated('Post', pretty_tree(cond),
+                                                                               zip(model_vars, vs),
+                                                                               value.pos)))]
                 # return
                 body += [Return(return_value)]
                 return body
@@ -273,8 +277,8 @@ class Instrumentor:
             case SimpleType():  # ok
                 return []
             case RefinementType(_, r):
-                return [AssertSatisfy(subst_expr(r, {'_': Var(value_ref)}),
-                                      {value_ref: 'this expr'}).set_pos(value_pos)]
+                return [Assert(subst_expr(r, {'_': Var(value_ref)}),
+                               ([value_ref], lambda vs: RuntimeTypeMismatch(pretty_tree(expected), vs[0], value_pos)))]
 
     def check_type(self, value: Expr, value_ref: str, expected: NormalForm, scope: Scope) -> list[Stmt]:
         self.typer.ensure(value, get_base_type(expected), scope)
