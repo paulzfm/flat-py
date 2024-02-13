@@ -3,7 +3,8 @@ import sys
 
 from flat.compiler.executor import Executor
 from flat.compiler.instrumentor import Instrumentor
-from flat.compiler.parser import parse_program
+from flat.compiler.issuer import Issuer
+from flat.compiler.parser import Parser
 from flat.compiler.printer import pretty_tree
 from flat.compiler.values import pretty_value
 
@@ -14,13 +15,26 @@ def compile_source(file_path: str):
         sys.exit(1)
 
     with open(file_path) as f:
-        code = f.read()
+        source_lines = f.readlines()
 
-    program = parse_program(code)
-    instrumentor = Instrumentor()
+    # parse
+    issuer = Issuer(source_lines)
+    parser = Parser(issuer)
+    program = parser.parse()
+    if issuer.has_errors():
+        issuer.print()
+        sys.exit(1)
+
+    # type check and instrument
+    instrumentor = Instrumentor(issuer)
     instrumentor.instrument(program)
+    if issuer.has_errors():
+        issuer.print()
+        sys.exit(1)
     print(pretty_tree(program))
-    executor = Executor(debug=True)
+
+    # execute
+    executor = Executor(issuer, instrumentor.typer.langs, debug=True)
     value = executor.run(program)
     print(f'Out: {pretty_value(value)}')
 

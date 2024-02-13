@@ -6,21 +6,21 @@ from isla.helpers import is_valid_grammar
 from isla.solver import ISLaSolver
 from isla.type_defs import Grammar as ISLAGrammar
 
-from flat.compiler.trees import (Rule, Clause, Token, CharSet, Symbol, Rep, Seq, Alt)
+from flat.compiler.trees import (Clause, Token, CharSet, Symbol, Rep, Seq, Alt)
 
 
 class Converter:
-    def __call__(self, rules: list[Rule]) -> ISLAGrammar:
+    def __call__(self, clauses: dict[str, Clause]) -> ISLAGrammar:
         self._grammar = {}
         self._next_counter = 0
 
-        for rule in rules:
-            label = f'<{rule.name}>'
+        for symbol in clauses:
+            label = f'<{symbol}>'
             self._grammar[label] = []
 
-        for rule in rules:
-            label = f'<{rule.name}>'
-            match rule.body:
+        for symbol in clauses:
+            label = f'<{symbol}>'
+            match clauses[symbol]:
                 case Alt(clauses):
                     self._grammar[label] += [self._convert(clause) for clause in clauses]
                 case clause:
@@ -69,15 +69,11 @@ class Converter:
 
 class LangObject:
     name: str
-    rules: list[Rule]  # TODO: remove
     clauses: dict[str, Clause]
 
-    def __init__(self, name: str, rules: list[Rule]):
+    def __init__(self, name: str, clauses: dict[str, Clause]):
         self.name = name
-        self.rules = rules
-        self.clauses = {}
-        for rule in rules:
-            self.clauses[rule.name] = rule.body
+        self.clauses = clauses
         self._solver_volume: int = 10
         self._isla_solver: Optional[ISLaSolver] = None
 
@@ -128,7 +124,7 @@ class LangObject:
     @property
     def isla_solver(self) -> ISLaSolver:
         if not self._isla_solver:
-            grammar = Converter()(self.rules)
+            grammar = Converter()(self.clauses)
             self._isla_solver = ISLaSolver(grammar, max_number_free_instantiations=self._solver_volume)
         return self._isla_solver
 

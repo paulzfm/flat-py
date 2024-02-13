@@ -1,6 +1,9 @@
-from parsy import whitespace, string, decimal_digit, any_char, regex, alt, seq, Parser, forward_declaration
+from parsy import whitespace, string, decimal_digit, any_char, regex, alt, seq, Parser, forward_declaration, ParseError, \
+    line_info_at
 
+from flat.compiler.errors import ParsingError
 from flat.compiler.expr_parser import expr_parser, Postfix, Prefix, InfixL, InfixR
+from flat.compiler.issuer import Issuer
 from flat.compiler.trees import *
 
 # whitespaces and comments
@@ -66,8 +69,12 @@ ident_rest = ident_start | decimal_digit | string("'")
 ident_name = skip_whitespaces >> seq(ident_start, ident_rest.many()).combine(make_string)
 
 
+def with_pos(p: Parser) -> Parser:
+    return skip_whitespaces >> p.mark().combine(lambda begin, res, end: (res, Pos(begin, (end[0], end[1] - 1))))
+
+
 def positional(p: Parser) -> Parser:
-    return p.mark().map(lambda triple: triple[1].set_pos(triple[0], triple[2]))
+    return with_pos(p).combine(lambda tree, pos: tree.set_pos(pos))
 
 
 ident = positional(ident_name.map(Ident))
@@ -127,8 +134,8 @@ list_type = positional(
 )
 simple_type.become(expr_parser(builtin_type | list_type, [
     InfixR(token('->').result(lambda t1, t2: FunType([t1], t2).copy_pos(t1, t2))),
-    Prefix(paren(simple_type.sep_by(comma)).mark().map(
-        lambda triple: lambda t: FunType(triple[1], t).set_pos(triple[0], t.pos.end)) << token('->'))
+    Prefix(with_pos(paren(simple_type.sep_by(comma))).combine(
+        lambda ts, pos: lambda t: FunType(ts, t).set_pos(Pos(pos.start, t.pos.end))) << token('->'))
 ]))
 
 named_type = positional(
@@ -164,20 +171,20 @@ select = seq(is_all, ident, token(':') >> is_abs, path).combine(
 
 def prefix_parser(*ops: str) -> Parser:
     # NOTE: avoid capturing any variable in lambda expressions as their values may be updated
-    return alt(*[token(op).mark().map(
-        lambda m: lambda e: App(Var(f'prefix_{m[1]}').set_pos(m[0], m[2]), [e]).set_pos(m[0], e.pos.end))
+    return alt(*[with_pos(token(op)).combine(
+        lambda op, pos: lambda e: App(Var(f'prefix_{op}').set_pos(pos), [e]).set_pos(Pos(pos.start, e.pos.end)))
         for op in ops])
 
 
 def infix_parser(*ops: str) -> Parser:
-    return alt(*[token(op).mark().map(
-        lambda m: lambda e1, e2: App(Var(m[1]).set_pos(m[0], m[2]), [e1, e2]).copy_pos(e1, e2))
+    return alt(*[with_pos(token(op)).combine(
+        lambda op, pos: lambda e1, e2: App(Var(op).set_pos(pos), [e1, e2]).copy_pos(e1, e2))
         for op in ops])
 
 
 expr.become(lambda_expr | if_expr | expr_parser(literal | variable | paren(expr), [
-    Postfix(paren(expr.sep_by(comma)).mark().map(
-        lambda triple: lambda f: App(f, triple[1]).set_pos(f.pos.start, triple[2]))),
+    Postfix(with_pos(paren(expr.sep_by(comma))).combine(
+        lambda e, pos: lambda f: App(f, e).set_pos(Pos(f.pos.start, pos.end)))),
     Prefix(prefix_parser('-')),
     InfixL(infix_parser('*', '/', '%')),
     InfixL(infix_parser('+', '-')),
@@ -248,9 +255,17 @@ method_def = positional(
 )
 
 top_level_def = lang_def | type_alias | fun_def | method_def
-program = top_level_def.many() << skip_whitespaces
+module = top_level_def.many() << skip_whitespaces
 
 
-# entry
-def parse_program(source: str) -> list[Def]:
-    return program.parse(source)
+class Parser:
+    def __init__(self, issuer: Issuer):
+        self.issuer = issuer
+
+    def parse(self) -> list[Def]:
+        source = ''.join(self.issuer.source_lines)
+        try:
+            return module.parse(source)
+        except ParseError as e:
+            self.issuer.error(ParsingError(line_info_at(e.stream, e.index), sorted(repr(x) for x in e.expected)))
+            return []

@@ -5,6 +5,8 @@ from typing import Optional, Tuple
 
 @dataclass
 class Pos:
+    """A position in source file that consists of a starting and ending point, both inclusive.
+    Each point is a zero-based coordinate (row, offset in row)."""
     start: Tuple[int, int]
     end: Tuple[int, int]
 
@@ -13,8 +15,8 @@ class Tree:
     def __init__(self):
         self.pos: Optional[Pos] = None
 
-    def set_pos(self, start: Tuple[int, int], end: Tuple[int, int]):
-        self.pos = Pos(start, end)
+    def set_pos(self, pos: Pos):
+        self.pos = pos
         return self
 
     def copy_pos(self, start_from, end_from: Optional = None):
@@ -155,6 +157,10 @@ class Type(Tree):
 
 class SimpleType(Type):
     pass
+
+
+# NOTE: only for type checker
+NoType = SimpleType()
 
 
 @dataclass
@@ -319,6 +325,12 @@ class Call(Stmt):
 @dataclass
 class Assert(Stmt):
     cond: Expr
+
+
+@dataclass
+class AssertSatisfy(Stmt):
+    cond: Expr
+    model_vars: dict[str, Optional[str]]  # name at runtime -> optional human-readable name/note
 
 
 @dataclass

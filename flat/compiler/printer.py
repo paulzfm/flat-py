@@ -28,10 +28,7 @@ class IndentPrinter:
             self._buf.write(' ' * (self._spaces * self._level))
             self._at_line_begin = False
 
-    def write(self, text: str | Ident):
-        if isinstance(text, Ident):
-            text = text.name
-
+    def write(self, text: str):
         self._write_spaces()
         assert '\n' not in text
         self._buf.write(text)
@@ -201,6 +198,10 @@ def pretty_tree(tree: Tree | list[Tree], spaces: int = 4) -> str:
                 to.write_line(';')
             case Assert(cond):
                 to.write('assert ')
+                print_tree(cond)
+                to.write_line(';')
+            case AssertSatisfy(cond):
+                to.write('assert_sat ')
                 print_tree(cond)
                 to.write_line(';')
             case Return(value):

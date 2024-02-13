@@ -1,5 +1,7 @@
 from flat.compiler import predef
+from flat.compiler.errors import *
 from flat.compiler.grammar import LangObject
+from flat.compiler.issuer import Issuer
 from flat.compiler.printer import pretty_tree
 from flat.compiler.trees import *
 
@@ -20,6 +22,9 @@ class Scope:
     def has_defined(self, name: str) -> bool:
         return name in self._items
 
+    def __getitem__(self, name: str) -> NormalForm:
+        return self._items[name]
+
     def update(self, name: str, typ: NormalForm) -> None:
         self._items[name] = typ
 
@@ -34,59 +39,10 @@ def get_base_type(nf: NormalForm) -> SimpleType:
 
 
 class Typer:
-    def __init__(self):
-        self._languages: dict[str, LangObject] = {}
+    def __init__(self, issuer: Issuer):
+        self.issuer = issuer
+        self.langs: dict[str, LangObject] = {}
         self._type_aliases: dict[str, NormalForm] = {}
-
-    def define_lang(self, ident: Ident, rules: list[Rule]) -> None:
-        defined = set(rule.name for rule in rules)
-        if 'start' not in defined:
-            raise TypeError('no start rule')
-
-        defined = frozenset(defined - {'start'})
-        used: set[str] = set()
-
-        def check(clause: Clause) -> None:
-            match clause:
-                case CharSet(lhs, rhs) as cs:
-                    if cs.begin > cs.end:
-                        raise TypeError(f"invalid charset: '{lhs.value}' must not greater than '{rhs.value}'")
-                case Symbol('start'):
-                    raise TypeError('cannot use start rule')
-                case Symbol(name):
-                    if name in defined:
-                        used.add(name)
-                    elif name not in self._languages:
-                        raise TypeError(f'undefined rule {name}')
-                case Rep(clause, rep_range):
-                    check(clause)
-                    match rep_range:
-                        case RepExactly(0):
-                            raise TypeError
-                        case RepExactly(1):
-                            raise TypeError
-                        case RepInRange(k1, k2) if k1 >= k2:
-                            raise TypeError(f'invalid rep: {k1} must be less than {k2}')
-                case Seq(clauses):
-                    for clause in clauses:
-                        check(clause)
-                case Alt(clauses):
-                    for clause in clauses:
-                        check(clause)
-
-        for rule in rules:
-            check(rule.body)
-
-        for unused in defined - used:
-            raise TypeError(f'unused rule {unused}')
-
-        self._languages[ident.name] = LangObject(ident.name, rules)
-        assert ident.name not in self._type_aliases
-        self._type_aliases[ident.name] = RefinementType(StringType(), InLang(Var('_'), ident))
-
-    def define_type_alias(self, ident: Ident, nf: NormalForm) -> None:
-        assert ident.name not in self._type_aliases
-        self._type_aliases[ident.name] = nf
 
     def normalize(self, annot: Type) -> NormalForm:
         """Expand a type (may not be simple) into normal form."""
@@ -94,7 +50,11 @@ class Typer:
             case SimpleType() as simple:
                 return simple
             case NamedType(x):
-                return self._type_aliases[x]
+                if x in self._type_aliases:
+                    return self._type_aliases[x]
+                else:
+                    self.issuer.error(UndefinedName(annot.pos))
+                    return NoType
             case RefinementType(b1, r1) as rt:
                 match self.normalize(b1):
                     case SimpleType():
@@ -104,17 +64,28 @@ class Typer:
 
     def expand(self, annot: Type) -> SimpleType:
         """Expand a type into simple type."""
-        match annot:
+        match self.normalize(annot):
             case SimpleType() as simple:
                 return simple
-            case NamedType(x):
-                match self._type_aliases[x]:
-                    case SimpleType() as simple:
-                        return simple
-                    case _:
-                        raise TypeError
-            case _:
-                raise TypeError
+            case RefinementType(base, _):
+                self.issuer.error(ExpectSimpleType(annot.pos))
+                assert isinstance(base, SimpleType)
+                return base
+        # match annot:
+        #     case SimpleType() as simple:
+        #         return simple
+        #     case NamedType(x) as node:
+        #         if x in self._type_aliases:
+        #             match self._type_aliases[x]:
+        #                 case SimpleType() as simple:
+        #                     return simple
+        #                 case _:
+        #                     raise TypeError
+        #         else:
+        #             self.issuer.error(UndefinedName(node.pos))
+        #             return NoType
+        #     case _:
+        #         raise TypeError
 
     def infer(self, expr: Expr, scope: Scope) -> SimpleType:
         match expr:
@@ -131,7 +102,8 @@ class Typer:
                     case None:
                         match predef.typ(name):
                             case None:
-                                raise TypeError(f'undefined name: {name}')
+                                self.issuer.error(UndefinedName(expr.pos))
+                                return NoType
                             case t:
                                 return t
                     case nf:
@@ -140,27 +112,33 @@ class Typer:
                 match self.infer(fun, scope):
                     case FunType(arg_types, return_type):
                         if len(arg_types) != len(args):
-                            raise TypeError
+                            self.issuer.error(ArityMismatch(len(arg_types), len(args), expr.pos))
                         for te, e in zip(arg_types, args):
                             self.ensure(e, te, scope)
                         return return_type
-                    case other:
-                        raise TypeError(f'expect fun type, but found {pretty_tree(other)}')
+                    case non_fun:
+                        if non_fun != NoType:
+                            self.issuer.error(TypeMismatch('fun type', pretty_tree(non_fun), fun.pos))
+                        return NoType
             case InLang(receiver, lang):
                 self.ensure(receiver, StringType(), scope)
-                self.ensure_lang(lang)
+                self.resolve_lang(lang)
             case Select(receiver, select_all, lang, absolute_path, path):
                 self.ensure(receiver, StringType(), scope)
-                self.ensure_lang(lang)
-                self.ensure_valid_path(lang.name, path, absolute_path, not select_all)
+                match self.resolve_lang(lang):
+                    case None:
+                        pass
+                    case o:
+                        self.ensure_valid_path(o, path, absolute_path, not select_all)
                 return ListType(StringType()) if select_all else StringType()
             case IfThenElse(cond, then_branch, else_branch):
                 self.ensure(cond, BoolType(), scope)
                 t = self.infer(then_branch, scope)
                 self.ensure(else_branch, t, scope)
                 return t
-            case other:
-                raise TypeError(f'cannot infer type for: {pretty_tree(other)}')
+            case _:
+                self.issuer.error(MissingTypeAnnot(expr.pos))
+                return NoType
 
     def ensure(self, expr: Expr, expected: SimpleType, scope: Scope) -> None:
         match expr:
@@ -170,11 +148,13 @@ class Typer:
                         formal_scope = Scope(scope)
                         for param, t in zip(params, arg_types):
                             if formal_scope.has_defined(param.name):
-                                raise TypeError(f'redefined lambda param {param}')
-                            formal_scope.update(param.name, t)
+                                tree = f'parameter {param.name} of type {pretty_tree(formal_scope[param.name])}'
+                                self.issuer.error(RedefinedName(tree, param.pos))
+                            else:
+                                formal_scope.update(param.name, t)
                         self.ensure(body, return_type, formal_scope)
                     case _:
-                        raise TypeError(f'lambda expression cannot have non-function type')
+                        self.issuer.error(TypeMismatch(pretty_tree(expected), 'fun type', expr.pos))
             case IfThenElse(cond, then_branch, else_branch):
                 self.ensure(cond, BoolType(), scope)
                 self.ensure(then_branch, expected, scope)
@@ -184,7 +164,7 @@ class Typer:
                 if self.is_subtype(actual, expected):
                     pass
                 else:
-                    raise TypeError(f'expect {pretty_tree(expected)}, but found {pretty_tree(actual)}')
+                    self.issuer.error(TypeMismatch(pretty_tree(expected), pretty_tree(actual), expr.pos))
 
     def is_subtype(self, lower: SimpleType, upper: SimpleType) -> bool:
         if lower == upper:
@@ -200,16 +180,17 @@ class Typer:
             case _:
                 return False
 
-    def ensure_lang(self, ident: Ident) -> None:
-        if ident.name not in self._languages:
-            raise TypeError(f'undefined lang {ident.name}')
+    def resolve_lang(self, ident: Ident) -> Optional[LangObject]:
+        if ident.name not in self.langs:
+            self.issuer.error(UndefinedName(ident.pos))
+            return None
+        return self.langs[ident.name]
 
-    def ensure_valid_path(self, lang_name: str, path: list[Ident], is_abs: bool, require_unique: bool) -> None:
-        lang = self._languages[lang_name]
-
+    def ensure_valid_path(self, lang: LangObject, path: list[Ident], is_abs: bool, require_unique: bool) -> None:
         for symbol in path:
             if symbol.name not in lang.defined_symbols:
-                raise TypeError
+                self.issuer.error(UndefinedName(symbol.pos))
+                return
 
         if is_abs:
             last_symbol = Ident('start')
@@ -230,3 +211,80 @@ class Typer:
                 case 2 if require_unique:
                     raise TypeError(f'path not unique, as there may exist multiple node labelled with {symbol}')
             last_symbol = symbol
+
+    def define_lang(self, ident: Ident, rules: list[Rule]) -> None:
+        if ident.name in self.langs:
+            self.issuer.error(RedefinedName(f'lang {ident.name}', ident.pos))
+            return
+        if ident.name in self._type_aliases:
+            self.issuer.error(RedefinedName(
+                f'type {ident.name} = {pretty_tree(self._type_aliases[ident.name])}', ident.pos))
+            return
+
+        grammar: dict[str, Rule] = {}
+        for rule in rules:
+            if rule.name in grammar:
+                self.issuer.error(RedefinedName(f'rule {grammar[rule.name]}', rule.ident.pos))
+            else:
+                grammar[rule.name] = rule
+
+        if 'start' not in grammar:
+            self.issuer.error(MissingStartRule(ident.pos))
+
+        unused: set[str] = set(grammar.keys()) - {'start'}
+
+        def check(clause: Clause) -> None:
+            match clause:
+                case CharSet(Literal(lower), lit) as cs:
+                    if cs.end <= cs.begin:
+                        self.issuer.error(InvalidClause(f'this charactor (code={cs.end}) must > '
+                                                        f'"{lower}" (code={cs.begin})', lit.pos))
+                case Symbol('start'):
+                    self.issuer.error(InvalidClause('using start rule is not allowed here', clause.pos,
+                                                    hint='introduce a new rule and let start rule point to it'))
+                case Symbol(name):
+                    if name in grammar:
+                        unused.discard(name)
+                    elif name not in self.langs:
+                        self.issuer.error(UndefinedName(clause.pos))
+                case Rep(clause, rep_range):
+                    check(clause)
+                    match rep_range:
+                        case RepExactly(lit):
+                            match lit.value:
+                                case 0:
+                                    self.issuer.error(InvalidClause('0 is not allowed here', lit.pos,
+                                                                    hint='use the empty clause "" instead'))
+                                case 1:
+                                    self.issuer.error(InvalidClause('1 is redundant here', lit.pos,
+                                                                    hint='drop the repetition in this clause'))
+                        case RepInRange(_, Literal() as lit) if lit.value == 0:
+                            self.issuer.error(InvalidClause('0 is not allowed here', lit.pos,
+                                                            hint='use the empty clause "" instead'))
+                        case RepInRange(Literal(lower), Literal() as lit) if lit.value <= lower:
+                            self.issuer.error(InvalidClause(f'this value must > {lower}', lit.pos))
+                case Seq(clauses):
+                    for clause in clauses:
+                        check(clause)
+                case Alt(clauses):
+                    for clause in clauses:
+                        check(clause)
+
+        for rule in rules:
+            check(rule.body)
+
+        for rule_name in unused:
+            self.issuer.error(UnusedRule(grammar[rule_name].ident.pos))
+
+        self.langs[ident.name] = LangObject(ident.name,
+                                            dict([(rule_name, grammar[rule_name].body) for rule_name in grammar]))
+        self._type_aliases[ident.name] = RefinementType(StringType(), InLang(Var('_'), ident))
+
+    def define_type_alias(self, ident: Ident, nf: NormalForm) -> None:
+        if ident.name in self.langs:
+            self.issuer.error(RedefinedName(f'lang {ident.name}', ident.pos))
+        elif ident.name in self._type_aliases:
+            self.issuer.error(RedefinedName(
+                f'type {ident.name} = {pretty_tree(self._type_aliases[ident.name])}', ident.pos))
+        else:
+            self._type_aliases[ident.name] = nf
