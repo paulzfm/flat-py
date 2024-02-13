@@ -47,13 +47,13 @@ class Instrumentor:
         """Instrument in place."""
         for tree in program:
             match tree:
-                case LangDef(name, rules):
-                    self.typer.define_lang(name, rules)
+                case LangDef(ident, rules):
+                    self.typer.define_lang(ident, rules)
 
-                case TypeAlias(name, body):
-                    self.typer.define_type_alias(name, self.typer.normalize(body))
+                case TypeAlias(ident, body):
+                    self.typer.define_type_alias(ident, self.typer.normalize(body))
 
-                case FunDef(name, params, return_annot, value):
+                case FunDef(ident, params, return_annot, value):
                     # check params
                     formal_scope = Scope(self._root_scope)
                     arg_types = []
@@ -69,15 +69,15 @@ class Instrumentor:
                     return_type = self.typer.expand(return_annot)
 
                     # add to scope
-                    if self._root_scope.has_defined(name):
+                    if self._root_scope.has_defined(ident.name):
                         raise TypeError
                     else:
-                        self._root_scope.update(name, FunType(arg_types, return_type))
+                        self._root_scope.update(ident.name, FunType(arg_types, return_type))
 
                     # check body
                     self.typer.ensure(value, return_type, formal_scope)
 
-                case MethodDef(name, params, return_param, specs, body) as m:
+                case MethodDef(ident, params, return_param, specs, body) as m:
                     # check params
                     formal_scope = Scope(self._root_scope)
                     arg_types = []
@@ -113,13 +113,13 @@ class Instrumentor:
                                 ensures.append(cond)
 
                     # build method info
-                    info = MethodInfo([Param(p.name, t) for p, t in zip(params, arg_types)],
-                                      Param(return_param.name, return_typ),
+                    info = MethodInfo([Param(p.ident, t) for p, t in zip(params, arg_types)],
+                                      Param(return_param.ident, return_typ),
                                       requires, ensures)
-                    if name in self._methods:
+                    if ident.name in self._methods:
                         raise TypeError
                     else:
-                        self._methods[name] = info
+                        self._methods[ident.name] = info
 
                     # check body
                     local_scope = Scope(formal_scope)
@@ -130,46 +130,46 @@ class Instrumentor:
 
     def trans_stmt(self, stmt: Stmt, this_method: MethodInfo, scope: Scope) -> list[Stmt]:
         match stmt:
-            case Assign(var, value) as node:
+            case Assign(m, value) as node:
                 match self.get_type_of_var(node, scope):
                     case None:  # infer
                         typ = self.typer.infer(value, scope)
-                        scope.update(var, typ)
+                        scope.update(m.name, typ)
                         return [stmt]
                     case typ:  # check
-                        scope.update(var, typ)
-                        check = self.check_type(value, var, typ, scope)
+                        scope.update(m.name, typ)
+                        check = self.check_type(value, m, typ, scope)
                         return [stmt] + check
 
-            case Call(method_name, args) as node:
-                if method_name not in self._methods:
+            case Call(method, args) as node:
+                if method.name not in self._methods:
                     raise TypeError
 
-                method = self._methods[method_name]
+                m = self._methods[method.name]
                 # evaluate args and check their types
                 body = []
                 new_args = []
-                if len(args) != method.arity:
+                if len(args) != m.arity:
                     raise TypeError
-                for arg, t in zip(args, method.param_types):
-                    var = self.fresh_name()
-                    body += [Assign(var, arg)]
-                    body += self.check_type(arg, var, t, scope)
-                    new_args.append(Var(var))
+                for arg, t in zip(args, m.param_types):
+                    x = self.fresh_name()
+                    body += [Assign(Ident(x), arg)]
+                    body += self.check_type(arg, x, t, scope)
+                    new_args.append(Var(x))
                 # check pre
-                for cond in method.subst_pre_conditions(new_args):
+                for cond in m.subst_pre_conditions(new_args):
                     body += [Assert(cond)]
                 # call
-                body += [Call(method_name, new_args, var=node.var)]
+                body += [Call(method, new_args, var=node.var)]
                 # check return type
                 match self.get_type_of_var(node, scope):
                     case None:
                         if node.var:
-                            scope.update(node.var, method.return_type)
+                            scope.update(node.var.name, m.return_type)
                     case typ:
                         assert node.var is not None
-                        scope.update(node.var, typ)
-                        body += self.check_subtype(method.return_type, node.var, typ)
+                        scope.update(node.var.name, typ)
+                        body += self.check_subtype(m.return_type, node.var.name, typ)
 
                 return body
 
@@ -187,7 +187,7 @@ class Instrumentor:
                     raise TypeError
 
                 return_var = self.fresh_name()
-                body = [Assign(return_var, value)]  # evaluate return value
+                body = [Assign(Ident(return_var), value)]  # evaluate return value
                 body += self.check_type(value, return_var, this_method.return_type, scope)  # check type
                 # check post condition
                 return_value = Var(return_var)
@@ -241,7 +241,9 @@ class Instrumentor:
     def get_type_of_var(self, node: Assign | Call, scope: Scope) -> Optional[NormalForm]:
         if node.type_annot:
             return self.typer.normalize(node.type_annot)
-        return scope.lookup(node.var)
+        if node.var:
+            return scope.lookup(node.var.name)
+        return None
 
     def fresh_name(self) -> str:
         self._next_counter += 1

@@ -38,12 +38,12 @@ class ParserTest(unittest.TestCase):
         self.assertEqual(Literal('ok'), expr.parse('"ok"'))
 
     def test_parse_in_lang(self):
-        self.assertEqual(InLang(Var('url'), 'URL'), expr.parse('url in URL'))
+        self.assertEqual(InLang(Var('url'), Ident('URL')), expr.parse('url in URL'))
 
     def test_parse_select(self):
-        self.assertEqual(Select(Var('url'), False, 'URL', True, ['local']),
+        self.assertEqual(Select(Var('url'), False, Ident('URL'), True, [Ident('local')]),
                          expr.parse('url @ URL:/local'))
-        self.assertEqual(Select(Var('arr'), True, 'JSON', False, ['array', 'element']),
+        self.assertEqual(Select(Var('arr'), True, Ident('JSON'), False, [Ident('array'), Ident('element')]),
                          expr.parse('arr @* JSON:array/element'))
 
     def test_parse_unary_expressions(self):
@@ -75,13 +75,13 @@ class ParserTest(unittest.TestCase):
                          expr.parse('if true then -1 else if n == 0 then 0 else 1'))
 
     def test_parse_lambda_expressions(self):
-        self.assertEqual(Lambda(['x'], Var('x')), expr.parse('x -> x'))
+        self.assertEqual(Lambda([Ident('x')], Var('x')), expr.parse('x -> x'))
         self.assertEqual(Lambda([], Literal(1)), expr.parse('() -> 1'))
-        self.assertEqual(Lambda(['x', 'f'], apply('f', Var('x'))),
+        self.assertEqual(Lambda([Ident('x'), Ident('f')], apply('f', Var('x'))),
                          expr.parse('(x, f) -> f(x)'))
-        self.assertEqual(Lambda(['x'], Lambda(['y'], apply('/', Var('x'), Var('y')))),
+        self.assertEqual(Lambda([Ident('x')], Lambda([Ident('y')], apply('/', Var('x'), Var('y')))),
                          expr.parse('x -> y -> x / y'))
-        self.assertEqual(Lambda(['x', 'y'],
+        self.assertEqual(Lambda([Ident('x'), Ident('y')],
                                 IfThenElse(apply('==', Var('n'), Literal(0)), Var('x'), Var('y'))),
                          expr.parse('(x, y) -> if n == 0 then x else y'))
 
@@ -93,12 +93,13 @@ class ParserTest(unittest.TestCase):
         n_le_10 = apply('<=', Var('n'), Literal(10))
         self.assertEqual(If(n_le_10, [Return()], []),
                          stmt.parse('if n <= 10 { return; }'))
-        self.assertEqual(If(n_le_10, [Call('m', [Var('n')], var='x'), Return()], [Call('print', [Var('n')])]),
+        self.assertEqual(If(n_le_10, [Call(Ident('m'), [Var('n')], var=Ident('x')), Return()],
+                            [Call(Ident('print'), [Var('n')])]),
                          stmt.parse('if n <= 10 { x = call m(n); return; } else { call print(n); }'))
 
     def test_parse_while_stmts_with_assign(self):
         n_le_10 = apply('<=', Var('n'), Literal(10))
-        self.assertEqual(While(n_le_10, [Assign('n', apply('+', Var('n'), Literal(1)))]),
+        self.assertEqual(While(n_le_10, [Assign(Ident('n'), apply('+', Var('n'), Literal(1)))]),
                          stmt.parse('while n <= 10 { n = n + 1; }'))
         self.assertEqual(While(Literal(True), [Assert(Literal(True))]),
                          stmt.parse('while true { assert true; }'))
@@ -106,24 +107,25 @@ class ParserTest(unittest.TestCase):
     def test_parse_assignments_with_type_annot(self):
         gt_zero = apply('>', Var('_'), Literal(0))
         pos = RefinementType(IntType(), gt_zero)
-        self.assertEqual(Assign('x', Literal(1), type_annot=pos),
+        self.assertEqual(Assign(Ident('x'), Literal(1), type_annot=pos),
                          stmt.parse('x: {int | _ > 0} = 1;'))
-        self.assertEqual(Call('m', [], var='x', type_annot=pos),
+        self.assertEqual(Call(Ident('m'), [], var=Ident('x'), type_annot=pos),
                          stmt.parse('x: {int | _ > 0} = call m();'))
 
     def test_parse_type_alias(self):
         gt_zero = apply('>', Var('_'), Literal(0))
         pos = RefinementType(IntType(), gt_zero)
-        self.assertEqual(TypeAlias('pos', pos), top_level_def.parse('type pos = {int | _ > 0}'))
+        self.assertEqual(TypeAlias(Ident('pos'), pos), top_level_def.parse('type pos = {int | _ > 0}'))
 
     def test_parse_fun_def(self):
-        self.assertEqual(FunDef('id', [Param('x', IntType())], IntType(), Var('x')),
+        self.assertEqual(FunDef(Ident('id'), [Param(Ident('x'), IntType())], IntType(), Var('x')),
                          top_level_def.parse('fun id(x: int): int = x'))
 
     def test_parse_method_def(self):
         import textwrap
         self.assertEqual(
-            MethodDef('extract_ip', [Param('url', NamedType('URL'))], Param('address', NamedType('IPv4')),
+            MethodDef(Ident('extract_ip'), [Param(Ident('url'), NamedType('URL'))],
+                      Param(Ident('address'), NamedType('IPv4')),
                       [MethodPostSpec(apply('==', Var('address'),
                                             apply('select', Var('url'), Literal('/address'))))], []),
             top_level_def.parse(textwrap.dedent("""\

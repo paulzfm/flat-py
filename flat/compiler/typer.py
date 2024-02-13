@@ -38,7 +38,7 @@ class Typer:
         self._languages: dict[str, LangObject] = {}
         self._type_aliases: dict[str, NormalForm] = {}
 
-    def define_lang(self, name: str, rules: list[Rule]) -> None:
+    def define_lang(self, ident: Ident, rules: list[Rule]) -> None:
         defined = set(rule.name for rule in rules)
         if 'start' not in defined:
             raise TypeError('no start rule')
@@ -48,9 +48,9 @@ class Typer:
 
         def check(clause: Clause) -> None:
             match clause:
-                case CharSet(begin, end):
-                    if begin > end:
-                        raise TypeError(f'invalid charset: {begin} must not greater than {end}')
+                case CharSet(lhs, rhs) as cs:
+                    if cs.begin > cs.end:
+                        raise TypeError(f"invalid charset: '{lhs.value}' must not greater than '{rhs.value}'")
                 case Symbol('start'):
                     raise TypeError('cannot use start rule')
                 case Symbol(name):
@@ -58,10 +58,15 @@ class Typer:
                         used.add(name)
                     elif name not in self._languages:
                         raise TypeError(f'undefined rule {name}')
-                case Rep(clause, at_least, at_most):
+                case Rep(clause, rep_range):
                     check(clause)
-                    if at_least > at_most:
-                        raise TypeError(f'invalid rep: {at_least} must not greater than {at_most}')
+                    match rep_range:
+                        case RepExactly(0):
+                            raise TypeError
+                        case RepExactly(1):
+                            raise TypeError
+                        case RepInRange(k1, k2) if k1 >= k2:
+                            raise TypeError(f'invalid rep: {k1} must be less than {k2}')
                 case Seq(clauses):
                     for clause in clauses:
                         check(clause)
@@ -75,13 +80,13 @@ class Typer:
         for unused in defined - used:
             raise TypeError(f'unused rule {unused}')
 
-        self._languages[name] = LangObject(name, rules)
-        assert name not in self._type_aliases
-        self._type_aliases[name] = RefinementType(StringType(), InLang(Var('_'), name))
+        self._languages[ident.name] = LangObject(ident.name, rules)
+        assert ident.name not in self._type_aliases
+        self._type_aliases[ident.name] = RefinementType(StringType(), InLang(Var('_'), ident))
 
-    def define_type_alias(self, name: str, nf: NormalForm) -> None:
-        assert name not in self._type_aliases
-        self._type_aliases[name] = nf
+    def define_type_alias(self, ident: Ident, nf: NormalForm) -> None:
+        assert ident.name not in self._type_aliases
+        self._type_aliases[ident.name] = nf
 
     def normalize(self, annot: Type) -> NormalForm:
         """Expand a type (may not be simple) into normal form."""
@@ -141,13 +146,13 @@ class Typer:
                         return return_type
                     case other:
                         raise TypeError(f'expect fun type, but found {pretty_tree(other)}')
-            case InLang(receiver, lang_name):
+            case InLang(receiver, lang):
                 self.ensure(receiver, StringType(), scope)
-                self.ensure_lang(lang_name)
-            case Select(receiver, select_all, lang_name, absolute_path, path):
+                self.ensure_lang(lang)
+            case Select(receiver, select_all, lang, absolute_path, path):
                 self.ensure(receiver, StringType(), scope)
-                self.ensure_lang(lang_name)
-                self.ensure_valid_path(lang_name, path, absolute_path, not select_all)
+                self.ensure_lang(lang)
+                self.ensure_valid_path(lang.name, path, absolute_path, not select_all)
                 return ListType(StringType()) if select_all else StringType()
             case IfThenElse(cond, then_branch, else_branch):
                 self.ensure(cond, BoolType(), scope)
@@ -163,10 +168,10 @@ class Typer:
                 match expected:
                     case FunType(arg_types, return_type):
                         formal_scope = Scope(scope)
-                        for x, t in zip(params, arg_types):
-                            if formal_scope.has_defined(x):
-                                raise TypeError(f'redefined lambda param {x}')
-                            formal_scope.update(x, t)
+                        for param, t in zip(params, arg_types):
+                            if formal_scope.has_defined(param.name):
+                                raise TypeError(f'redefined lambda param {param}')
+                            formal_scope.update(param.name, t)
                         self.ensure(body, return_type, formal_scope)
                     case _:
                         raise TypeError(f'lambda expression cannot have non-function type')
@@ -195,31 +200,31 @@ class Typer:
             case _:
                 return False
 
-    def ensure_lang(self, name: str) -> None:
-        if name not in self._languages:
-            raise TypeError(f'undefined lang {name}')
+    def ensure_lang(self, ident: Ident) -> None:
+        if ident.name not in self._languages:
+            raise TypeError(f'undefined lang {ident.name}')
 
-    def ensure_valid_path(self, lang_name: str, path: list[str], is_abs: bool, require_unique: bool) -> None:
+    def ensure_valid_path(self, lang_name: str, path: list[Ident], is_abs: bool, require_unique: bool) -> None:
         lang = self._languages[lang_name]
 
         for symbol in path:
-            if symbol not in lang.defined_symbols:
+            if symbol.name not in lang.defined_symbols:
                 raise TypeError
 
         if is_abs:
-            last_symbol = 'start'
+            last_symbol = Ident('start')
             symbols = path
         else:
             last_symbol = path[0]
             symbols = path[1:]
-            match lang.count(last_symbol, 'start', False):
+            match lang.count(last_symbol.name, 'start', False):
                 case 0:
                     raise TypeError(f'unreachable symbol {last_symbol}')
                 case 2 if require_unique:
                     raise TypeError(f'path not unique, as there may exist multiple node labelled with {last_symbol}')
 
         for symbol in symbols:
-            match lang.count(symbol, last_symbol, True):
+            match lang.count(symbol.name, last_symbol.name, True):
                 case 0:
                     raise TypeError(f'unreachable symbol {symbol}')
                 case 2 if require_unique:

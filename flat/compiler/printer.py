@@ -28,7 +28,10 @@ class IndentPrinter:
             self._buf.write(' ' * (self._spaces * self._level))
             self._at_line_begin = False
 
-    def write(self, text: str):
+    def write(self, text: str | Ident):
+        if isinstance(text, Ident):
+            text = text.name
+
         self._write_spaces()
         assert '\n' not in text
         self._buf.write(text)
@@ -148,19 +151,24 @@ def pretty_tree(tree: Tree | list[Tree], spaces: int = 4) -> str:
                     case _:
                         print_tree(fun)
                         print_group(args)
-            case InLang(receiver, lang_name):
+            case InLang(receiver, lang):
                 print_tree(receiver)
-                to.write(f' in {lang_name}')
-            case Select(receiver, select_all, lang_name, is_abs, path):
+                to.write(' in ')
+                print_tree(lang)
+            case Select(receiver, select_all, lang, is_abs, path):
                 print_tree(receiver)
                 to.write(' @* ' if select_all else ' @ ')
-                to.write(f'{lang_name}:')
+                print_tree(lang)
+                to.write(':')
                 if is_abs:
                     to.write('/')
-                to.write('/'.join(path))
+                print_tree(path[0])
+                for symbol in path[1:]:
+                    to.write('/')
+                    print_tree(symbol)
             case Lambda(params, body):
                 if len(params) == 1:
-                    to.write(params[0])
+                    print_tree(params[0])
                 else:
                     print_group(params)
                 to.write(' -> ')
@@ -174,21 +182,21 @@ def pretty_tree(tree: Tree | list[Tree], spaces: int = 4) -> str:
                 print_tree(else_branch)
             # statements
             case Assign(var, value, type_annot):
-                to.write(var)
+                print_tree(var)
                 if type_annot:
                     to.write(': ')
                     print_tree(type_annot)
                 to.write(' = ')
                 print_tree(value)
                 to.write_line(';')
-            case Call(method_name, args, var, type_annot):
+            case Call(method, args, var, type_annot):
                 if var:
-                    to.write(var)
+                    print_tree(var)
                     if type_annot:
                         to.write(': ')
                         print_tree(type_annot)
                     to.write(' = ')
-                to.write(method_name)
+                print_tree(method)
                 print_group(args)
                 to.write_line(';')
             case Assert(cond):
@@ -217,8 +225,9 @@ def pretty_tree(tree: Tree | list[Tree], spaces: int = 4) -> str:
                 print_body(body)
                 to.write_line()
             # params
-            case Param(name, typ):
-                to.write(f'{name}: ')
+            case Param(ident, typ):
+                print_tree(ident)
+                to.write(': ')
                 print_tree(typ)
             # specs
             case MethodPreSpec(cond):
@@ -230,35 +239,43 @@ def pretty_tree(tree: Tree | list[Tree], spaces: int = 4) -> str:
                 print_tree(cond)
                 to.write_line()
             # definitions
-            case TypeAlias(name, body):
-                to.write(f'type {name} = ')
+            case TypeAlias(ident, body):
+                to.write('type ')
+                print_tree(ident)
+                to.write(' = ')
                 print_tree(body)
                 to.write_line()
-            case LangDef(name, _):
-                to.write(f'lang {name}')
-            case FunDef(name, params, return_annot, value):
-                to.write(f'fun {name}')
+            case LangDef(ident, _):
+                to.write('lang ')
+                print_tree(ident)
+            case FunDef(ident, params, return_annot, value):
+                to.write('fun ')
+                print_tree(ident)
                 print_group(params)
                 to.write(': ')
                 print_tree(return_annot)
                 to.write(' = ')
                 print_tree(value)
                 to.write_line()
-            case MethodDef(name, params, return_param, specs, body):
-                to.write(f'method {name}')
+            case MethodDef(ident, params, return_param, specs, body):
+                to.write('method ')
+                print_tree(ident)
                 print_group(params)
-                to.write(': ')
+                to.write(': (')
                 print_tree(return_param)
+                to.write_line(')')
                 if len(specs) > 0:
-                    to.write_line()
                     to.inc_level()
                     for spec in specs:
                         print_tree(spec)
                     to.dec_level()
                 print_body(body)
                 to.write_line()
+            # ident
+            case Ident(name):
+                to.write(name)
             case other:
-                raise NotImplementedError(f'{other}')
+                raise NotImplementedError(f'print_tree for {other.__class__.__name__}')
 
     match tree:
         case Tree() as t:

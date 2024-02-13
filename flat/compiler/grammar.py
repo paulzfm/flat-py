@@ -6,7 +6,7 @@ from isla.helpers import is_valid_grammar
 from isla.solver import ISLaSolver
 from isla.type_defs import Grammar as ISLAGrammar
 
-from flat.compiler.trees import Rule, Clause, Token, CharSet, Symbol, Rep, Seq, Alt
+from flat.compiler.trees import (Rule, Clause, Token, CharSet, Symbol, Rep, Seq, Alt)
 
 
 class Converter:
@@ -39,19 +39,22 @@ class Converter:
             case Token(text):
                 assert '<' not in text and '>' not in text
                 return text
-            case CharSet(begin, end):
+            case CharSet() as cs:
                 nonterminal = self._fresh_name()
-                self._grammar[nonterminal] = [chr(code) for code in range(begin, end + 1)]
+                self._grammar[nonterminal] = [chr(code) for code in cs.get_range]
                 return nonterminal
             case Symbol(name):
                 return f'<{name}>'
-            case Rep(clause, at_least, at_most):
+            case Rep(clause, rep_range):
                 element = self._convert(clause)
                 nonterminal = self._fresh_name()
-                if at_most:  # finite
-                    self._grammar[nonterminal] = [element * k for k in range(at_least, at_most + 1)]
+
+                k1 = rep_range.lower
+                k2 = rep_range.upper
+                if k2:  # finite
+                    self._grammar[nonterminal] = [element * k for k in range(k1, k2 + 1)]
                 else:  # infinite
-                    required = element * at_least
+                    required = element * k1
                     optionals = self._fresh_name()
                     self._grammar[optionals] = ['', element + optionals]
                     self._grammar[nonterminal] = required + optionals
@@ -110,14 +113,9 @@ class LangObject:
                 if not direct:
                     n = acc(n, self.count(target, self.clauses[name], direct))
                 return n
-            case Rep(clause, at_least, at_most):
-                if at_most == 0:
+            case Rep(clause, _):
+                if self.count(target, clause, direct) == 0:
                     return 0
-                n = self.count(target, clause, direct)
-                if n == 0:
-                    return 0
-                if at_least == at_most == 1:
-                    return n
                 return 2
             case Seq(clauses):
                 return reduce(acc, [self.count(target, clause, direct) for clause in clauses])

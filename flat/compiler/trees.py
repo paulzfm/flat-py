@@ -1,20 +1,44 @@
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Tuple
 
 
 @dataclass
 class Pos:
-    line: int
-    column: int
+    start: Tuple[int, int]
+    end: Tuple[int, int]
 
 
 class Tree:
-    pos: Pos
+    def __init__(self):
+        self.pos: Optional[Pos] = None
 
-    def set_pos(self, pos: Pos):
-        self.pos = pos
+    def set_pos(self, start: Tuple[int, int], end: Tuple[int, int]):
+        self.pos = Pos(start, end)
         return self
+
+    def copy_pos(self, start_from, end_from: Optional = None):
+        if not end_from:
+            end_from = start_from
+        self.pos = Pos(start_from.pos.start, end_from.pos.end)
+        return self
+
+
+@dataclass
+class Ident(Tree):
+    name: str
+
+
+class Expr(Tree):
+    pass
+
+
+SimpleLiteralValue = int | bool | str
+
+
+@dataclass
+class Literal(Expr):
+    value: SimpleLiteralValue
 
 
 # --- Lang rules ---
@@ -29,8 +53,20 @@ class Token(Clause):
 
 @dataclass
 class CharSet(Clause):
-    begin: int
-    end: int
+    lhs: Literal  # char
+    rhs: Literal  # char
+
+    @property
+    def begin(self) -> int:
+        return ord(self.lhs.value)
+
+    @property
+    def end(self) -> int:
+        return ord(self.rhs.value)
+
+    @property
+    def get_range(self) -> range:
+        return range(self.begin, self.end + 1)
 
 
 @dataclass
@@ -39,11 +75,57 @@ class Symbol(Clause):
     name: str
 
 
+class RepRange(Tree):
+    lower: int
+    upper: Optional[int]  # None = inf
+
+
+class RepStar(RepRange):
+    lower = 0
+    upper = None
+
+
+class RepPlus(RepRange):
+    lower = 1
+    upper = None
+
+
+class RepOpt(RepRange):
+    lower = 0
+    upper = 1
+
+
+@dataclass
+class RepExactly(RepRange):
+    times: Literal  # int
+
+    @property
+    def lower(self) -> int:
+        return self.times.value
+
+    @property
+    def upper(self) -> int:
+        return self.times.value
+
+
+@dataclass
+class RepInRange(RepRange):
+    at_least: Optional[Literal]  # int
+    at_most: Optional[Literal]  # int
+
+    @property
+    def lower(self) -> int:
+        return self.at_least.value if self.at_least else 0
+
+    @property
+    def upper(self) -> Optional[int]:
+        return self.at_most.value if self.at_most else None
+
+
 @dataclass
 class Rep(Clause):
     clause: Clause
-    at_least: int
-    at_most: Optional[int]
+    rep_range: RepRange
 
 
 @dataclass
@@ -58,8 +140,12 @@ class Alt(Clause):
 
 @dataclass
 class Rule(Tree):
-    name: str
+    ident: Ident
     body: Clause
+
+    @property
+    def name(self) -> str:
+        return self.ident.name
 
 
 # --- Types ---
@@ -108,18 +194,8 @@ class FunType(SimpleType):
 
 
 @dataclass
-class OverloadFunType(SimpleType):
-    """Only for type checker."""
-    options: list[FunType]
-
-
-@dataclass
 class NamedType(Type):
     name: str
-
-
-class Expr(Tree):
-    pass
 
 
 @dataclass
@@ -130,19 +206,15 @@ class RefinementType(Type):
 
 @dataclass
 class Param(Tree):
-    name: str
+    ident: Ident
     typ: Type
+
+    @property
+    def name(self) -> str:
+        return self.ident.name
 
 
 # --- Expressions ---
-SimpleLiteralValue = int | bool | str
-
-
-@dataclass
-class Literal(Expr):
-    value: SimpleLiteralValue
-
-
 @dataclass
 class Var(Expr):
     name: str
@@ -169,21 +241,21 @@ def infix(op: str, lhs: Expr, rhs: Expr) -> App:
 @dataclass
 class InLang(Expr):
     receiver: Expr
-    lang_name: str
+    lang: Ident
 
 
 @dataclass
 class Select(Expr):
     receiver: Expr
     select_all: bool
-    lang_name: str
+    lang: Ident
     path_is_absolute: bool
-    path: list[str]
+    path: list[Ident]
 
 
 @dataclass
 class Lambda(Expr):
-    params: list[str]
+    params: list[Ident]
     body: Expr
 
 
@@ -204,7 +276,7 @@ def subst_expr(expr: Expr, mappings: dict[str, Expr], closed: frozenset[str] = f
             return App(subst_expr(e, mappings, closed),
                        [subst_expr(e, mappings, closed) for e in es])
         case Lambda(xs, e):
-            return Lambda(xs, subst_expr(e, mappings, closed | frozenset(x.name for x in xs)))
+            return Lambda(xs, subst_expr(e, mappings, closed | frozenset(x.ident for x in xs)))
         case InLang(e, lang):
             return InLang(subst_expr(e, mappings, closed), lang)
         case Select(e) as node:
@@ -226,19 +298,19 @@ class Stmt(Tree):
 
 @dataclass
 class Assign(Stmt):
-    var: str
+    var: Ident
     value: Expr
     type_annot: Optional[Type] = None
 
 
 @dataclass
 class Call(Stmt):
-    method_name: str
+    method: Ident
     args: list[Expr]
-    var: Optional[str] = None
+    var: Optional[Ident] = None
     type_annot: Optional[Type] = None
 
-    def set_lvalue(self, var: str, type_annot: Optional[Type]):
+    def set_lvalue(self, var: Ident, type_annot: Optional[Type]):
         self.var = var
         self.type_annot = type_annot
         return self
@@ -270,7 +342,11 @@ class While(Stmt):
 # --- Definitions ---
 @dataclass
 class Def(Tree):
-    name: str
+    ident: Ident
+
+    @property
+    def name(self) -> str:
+        return self.ident.name
 
 
 @dataclass
@@ -291,7 +367,7 @@ class FunDef(Def):
 
 
 @dataclass
-class MethodSpec:
+class MethodSpec(Tree):
     cond: Expr
 
 

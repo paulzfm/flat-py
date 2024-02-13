@@ -1,5 +1,4 @@
 import sys
-from typing import Tuple
 
 from flat.compiler import predef
 from flat.compiler.grammar import LangObject
@@ -47,14 +46,14 @@ class Executor:
 
     def load(self, tree: Def) -> None:
         match tree:
-            case LangDef(name, rules):
-                self._languages[name] = LangObject(name, rules)
+            case LangDef(ident, rules):
+                self._languages[ident.name] = LangObject(ident.name, rules)
             case TypeAlias():
                 pass
-            case FunDef(name, params, _, value):
-                self._functions[name] = Callable(name, [p.name for p in params], [Return(value)])
-            case MethodDef(name, params, _, _, body):
-                self._functions[name] = Callable(name, [p.name for p in params], body)
+            case FunDef(ident, params, _, value):
+                self._functions[ident.name] = Callable(ident.name, [p.name for p in params], [Return(value)])
+            case MethodDef(ident, params, _, _, body):
+                self._functions[ident.name] = Callable(ident.name, [p.name for p in params], body)
 
     def call(self, fun_obj: Callable, arg_values: list[Value]) -> Value:
         frame = StackFrame()
@@ -74,12 +73,12 @@ class Executor:
         for stmt in body:
             match stmt:
                 case Assign(var, value):
-                    self._top_frame.put_value(var, self.eval(value))
-                case Call(method_name, args) as node:
+                    self._top_frame.put_value(var.name, self.eval(value))
+                case Call(method, args) as node:
                     arg_values = [self.eval(arg) for arg in args]
-                    return_value = self.call(self._functions[method_name], arg_values)
+                    return_value = self.call(self._functions[method.name], arg_values)
                     if node.var:
-                        self._top_frame.put_value(node.var, return_value)
+                        self._top_frame.put_value(node.var.name, return_value)
                 case Assert(cond):
                     match self.eval(cond):
                         case BoolValue(True):
@@ -136,7 +135,7 @@ class Executor:
                     return self._top_frame.get_value(name)
                 self._abort(f'undefined name: {name}', pretty_tree(expr))
             case Lambda(params, body):
-                return Callable('<lambda>', params, [Return(body)])
+                return Callable('<lambda>', [param.name for param in params], [Return(body)])
             case App(fun, args):
                 arg_values = [self.eval(arg) for arg in args]
                 match fun:
@@ -157,22 +156,23 @@ class Executor:
                                 self._abort(f'undefined name: {f}', pretty_tree(fun))
                             case value:
                                 return value
-            case InLang(receiver, lang_name):
+            case InLang(receiver, lang):
                 match self.eval(receiver):
                     case StringValue(s):
-                        return BoolValue(s in self._languages[lang_name])
+                        return BoolValue(s in self._languages[lang.name])
                     case v:
                         self._abort(f'illegal value: {pretty_value(v)}',
                                     pretty_tree(receiver))
-            case Select(receiver, select_all, lang_name, is_abs, path):
+            case Select(receiver, select_all, lang, is_abs, path):
                 match self.eval(receiver):
                     case StringValue(word):
-                        lang = self._languages[lang_name]
+                        o = self._languages[lang.name]
+                        p = [symbol.name for symbol in path]
                         if select_all:
-                            values = [StringValue(s) for s in lang.select_all(word, path, is_abs)]
+                            values = [StringValue(s) for s in o.select_all(word, p, is_abs)]
                             return ListValue(values)
                         else:
-                            return StringValue(lang.select_unique(word, path, is_abs))
+                            return StringValue(o.select_unique(word, p, is_abs))
                     case v:
                         self._abort(f'illegal value: {pretty_value(v)}',
                                     pretty_tree(receiver))
