@@ -34,7 +34,7 @@ class ListValue(Value):
 
 
 @dataclass
-class Callable(Value):
+class FunObject(Value):
     name: str
     param_names: list[str]
     body: list[Stmt]
@@ -54,5 +54,5 @@ def pretty_value(value: Value) -> str:
             return 'none'
         case ListValue(values):
             return '[' + ', '.join([pretty_value(v) for v in values]) + ']'
-        case Callable(name):
+        case FunObject(name):
             return f'<function {name}>'

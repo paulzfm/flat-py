@@ -28,7 +28,7 @@ class StackFrame:
 
 class Executor:
     def __init__(self, issuer: Issuer, langs: dict[str, LangObject], debug: bool = False):
-        self._functions: dict[str, Callable] = {}
+        self._functions: dict[str, FunObject] = {}
         self._languages = langs
         self._call_stack: list[StackFrame] = []
         self._issuer = issuer
@@ -58,11 +58,11 @@ class Executor:
             case TypeAlias():
                 pass
             case FunDef(ident, params, _, value):
-                self._functions[ident.name] = Callable(ident.name, [p.name for p in params], [Return(value)])
+                self._functions[ident.name] = FunObject(ident.name, [p.name for p in params], [Return(value)])
             case MethodDef(ident, params, _, _, body):
-                self._functions[ident.name] = Callable(ident.name, [p.name for p in params], body)
+                self._functions[ident.name] = FunObject(ident.name, [p.name for p in params], body)
 
-    def call(self, fun_obj: Callable, arg_values: list[Value]) -> Value:
+    def call(self, fun_obj: FunObject, arg_values: list[Value]) -> Value:
         frame = StackFrame()
         self._call_stack.append(frame)
         # load args
@@ -145,7 +145,7 @@ class Executor:
                     return self._top_frame.get_value(name)
                 raise RuntimeError
             case Lambda(params, body):
-                return Callable('<lambda>', [param.name for param in params], [Return(body)])
+                return FunObject('<lambda>', [param.name for param in params], [Return(body)])
             case App(fun, args):
                 arg_values = [self.eval(arg) for arg in args]
                 match fun:
@@ -154,7 +154,7 @@ class Executor:
                             case None:  # not a predefined function
                                 if f in self._top_frame:
                                     match self._top_frame.get_value(f):
-                                        case Callable() as c:
+                                        case FunObject() as c:
                                             return self.call(c, arg_values)
                                         case v:
                                             raise RuntimeError

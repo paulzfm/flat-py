@@ -200,10 +200,6 @@ def pretty_tree(tree: Tree | list[Tree], spaces: int = 4) -> str:
                 to.write('assert ')
                 print_tree(cond)
                 to.write_line(';')
-            case AssertSatisfy(cond):
-                to.write('assert_sat ')
-                print_tree(cond)
-                to.write_line(';')
             case Return(value):
                 to.write('return')
                 if value:

@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Tuple, Optional, Literal
+from typing import Tuple, Optional
 
 from flat.compiler.pos import Pos
 
@@ -9,6 +9,7 @@ class Error:
     summary: str  # main message
     pos: Pos  # main position
     explanation: Optional[list[str]] = None  # multi-line detailed explanation
+    attachment: Optional[Tuple[Pos, list[str]]] = None  # one more associated error position with explanations
 
 
 class ParsingError(Error):
@@ -26,8 +27,8 @@ class UndefinedName(Error):
 
 
 class RedefinedName(Error):
-    def __init__(self, conflict_with: str, pos: Pos):
-        super().__init__('Redefined name', pos, [f'conflict with {conflict_with}'])
+    def __init__(self, conflict_with: Pos, pos: Pos):
+        super().__init__('Redefined name', pos, [], (conflict_with, ['already defined here']))
 
 
 class ExpectSimpleType(Error):
@@ -85,10 +86,32 @@ class RuntimeTypeMismatch(RuntimeTypeError):
                                                 f'actual value:  {actual_value}'])
 
 
-class SpecViolated(RuntimeTypeError):
-    def __init__(self, mode: Literal['Pre', 'Post'], cond: str, env_values: list[Tuple[str, str]], pos: Pos):
-        details = ['env'] + [f'{name} = {value}' for name, value in env_values]
-        super().__init__(f'{mode}-condition "{cond}" violated', pos, details)
+class PreconditionViolated(RuntimeTypeError):
+    def __init__(self, method: str, args: list[Tuple[str, str]], at: Pos, cond_pos: Pos):
+        """
+        Constructor.
+        :param method: method name.
+        :param args: a list of formal argument names and their pretty-printed values.
+        :param at: the position of the call statement where violation occurred.
+        :param cond_pos: the position of the precondition.
+        """
+        details = ['inputs:'] + [f'  {name} = {value}' for name, value in args]
+        super().__init__(f'Precondition of method {method} violated', cond_pos, details,
+                         (at, ['caused by this method call']))
+
+
+class PostconditionViolated(RuntimeTypeError):
+    def __init__(self, args: list[Tuple[str, str]], returns: Tuple[str, str], at: Pos, cond_pos: Pos):
+        """
+        Constructor.
+        :param args: a list of formal argument names and their pretty-printed values.
+        :param returns: the return param name and its pretty-printed value.
+        :param at: the position of the return statement where violation occurred.
+        :param cond_pos: the position of the postcondition.
+        """
+        details = ['inputs:'] + [f'  {name} = {value}' for name, value in args] + [
+            f'outputs:', f'  {returns[0]} = {returns[1]}']
+        super().__init__(f'Postcondition violated', cond_pos, details, (at, ['at this returning point']))
 
 
 class AssertionFailure(RuntimeTypeError):

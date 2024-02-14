@@ -1,5 +1,5 @@
-from flat.compiler.errors import RedefinedName, UndefinedName, ArityMismatch, TypeMismatch, RuntimeTypeMismatch, \
-    SpecViolated
+from flat.compiler.context import Context
+from flat.compiler.errors import *
 from flat.compiler.issuer import Issuer
 from flat.compiler.printer import pretty_tree
 from flat.compiler.trees import *
@@ -7,11 +7,14 @@ from flat.compiler.typer import Scope, NormalForm, Typer, get_base_type
 
 
 class MethodInfo:
+    preconditions: list[Expr]
+    postconditions: list[Expr]
+
     def __init__(self, params: list[Param], return_param: Param, requires: list[Expr], ensures: list[Expr]):
         self._params = params
         self._return_param = return_param
-        self._requires = requires
-        self._ensures = ensures
+        self.preconditions = requires
+        self.postconditions = ensures
 
     @property
     def arity(self) -> int:
@@ -22,12 +25,12 @@ class MethodInfo:
         return [p.name for p in self._params]
 
     @property
-    def formal_args(self) -> list[Var]:
-        return [Var(p.name) for p in self._params]
-
-    @property
     def param_types(self) -> list[NormalForm]:
         return [p.typ for p in self._params]
+
+    @property
+    def return_param_name(self) -> str:
+        return self._return_param.name
 
     @property
     def return_type(self) -> NormalForm:
@@ -37,20 +40,10 @@ class MethodInfo:
     def typ(self) -> FunType:
         return FunType(self.param_types, self.return_type)
 
-    def subst_pre_conditions(self, args: list[Expr]) -> list[Expr]:
-        assert len(args) == self.arity
-        mappings = dict((p.name, arg) for p, arg in zip(self._params, args))
-        return [subst_expr(e, mappings) for e in self._requires]
-
-    def subst_post_conditions(self, args: list[Expr]) -> list[Expr]:
-        assert len(args) == self.arity + 1
-        mappings = dict((p.name, arg) for p, arg in zip(self._params + [self._return_param], args))
-        return [subst_expr(e, mappings) for e in self._ensures]
-
 
 class Instrumentor:
     def __init__(self, issuer: Issuer):
-        self._methods: dict[str, MethodInfo] = {}
+        self._methods: Context[MethodInfo] = Context()
         self._root_scope: Scope = Scope()
         self._next_counter = 0
         self.issuer = issuer
@@ -68,15 +61,11 @@ class Instrumentor:
 
                 case FunDef(ident, params, return_annot, value):
                     if ident.name in self._methods:
-                        self.issuer.error(RedefinedName(f'method {ident.name} '
-                                                        f'of type {pretty_tree(self._methods[ident.name].typ)}',
-                                                        ident.pos))
+                        self.issuer.error(RedefinedName(self._methods.get_pos(ident.name), ident.pos))
                         continue
 
-                    if self._root_scope.has_defined(ident.name):
-                        self.issuer.error(RedefinedName(f'fun {ident.name} '
-                                                        f'of type {pretty_tree(self._root_scope[ident.name])}',
-                                                        ident.pos))
+                    if ident.name in self._root_scope:
+                        self.issuer.error(RedefinedName(self._root_scope.get_pos(ident.name), ident.pos))
                         continue
 
                     # check params
@@ -85,33 +74,27 @@ class Instrumentor:
                     for param in params:
                         typ = self.typer.expand(param.typ)
                         arg_types.append(typ)
-                        if formal_scope.has_defined(param.name):
-                            self.issuer.error(RedefinedName(f'parameter {param.name} '
-                                                            f'of type {pretty_tree(formal_scope[param.name])}',
-                                                            param.ident.pos))
+                        if param.name in formal_scope:
+                            self.issuer.error(RedefinedName(formal_scope.get_pos(param.name), param.ident.pos))
                         else:
-                            formal_scope.update(param.name, typ)
+                            formal_scope.update(param.ident, typ)
 
                     # check return type and value
                     return_type = self.typer.expand(return_annot)
 
                     # add to scope
-                    self._root_scope.update(ident.name, FunType(arg_types, return_type))
+                    self._root_scope.update(ident, FunType(arg_types, return_type))
 
                     # check body
                     self.typer.ensure(value, return_type, formal_scope)
 
                 case MethodDef(ident, params, return_param, specs, body) as m:
                     if ident.name in self._methods:
-                        self.issuer.error(RedefinedName(f'method {ident.name} '
-                                                        f'of type {pretty_tree(self._methods[ident.name].typ)}',
-                                                        ident.pos))
+                        self.issuer.error(RedefinedName(self._methods.get_pos(ident.name), ident.pos))
                         continue
 
-                    if self._root_scope.has_defined(ident.name):
-                        self.issuer.error(RedefinedName(f'fun {ident.name} '
-                                                        f'of type {pretty_tree(self._root_scope[ident.name])}',
-                                                        ident.pos))
+                    if ident.name in self._root_scope:
+                        self.issuer.error(RedefinedName(self._root_scope.get_pos(ident.name), ident.pos))
                         continue
 
                     # check params
@@ -120,12 +103,10 @@ class Instrumentor:
                     for param in params:
                         typ = self.typer.normalize(param.typ)
                         arg_types.append(typ)
-                        if formal_scope.has_defined(param.name):
-                            self.issuer.error(RedefinedName(f'parameter {param.name} '
-                                                            f'of type {pretty_tree(formal_scope[param.name])}',
-                                                            param.ident.pos))
+                        if param.name in formal_scope:
+                            self.issuer.error(RedefinedName(formal_scope.get_pos(param.name), param.ident.pos))
                         else:
-                            formal_scope.update(param.name, typ)
+                            formal_scope.update(param.ident, typ)
 
                     # check pre-conditions
                     requires = []
@@ -137,12 +118,11 @@ class Instrumentor:
 
                     # check return param
                     return_typ = self.typer.normalize(return_param.typ)
-                    if formal_scope.has_defined(return_param.name):
-                        self.issuer.error(RedefinedName(f'parameter {return_param.name} '
-                                                        f'of type {pretty_tree(formal_scope[return_param.name])}',
+                    if return_param.name in formal_scope:
+                        self.issuer.error(RedefinedName(formal_scope.get_pos(return_param.name),
                                                         return_param.ident.pos))
                     else:
-                        formal_scope.update(return_param.name, return_typ)
+                        formal_scope.update(return_param.ident, return_typ)
 
                     # check post-conditions
                     ensures = []
@@ -154,9 +134,8 @@ class Instrumentor:
 
                     # build method info
                     info = MethodInfo([Param(p.ident, t) for p, t in zip(params, arg_types)],
-                                      Param(return_param.ident, return_typ),
-                                      requires, ensures)
-                    self._methods[ident.name] = info
+                                      Param(return_param.ident, return_typ), requires, ensures)
+                    self._methods.update(ident, info)
 
                     # check body
                     local_scope = Scope(formal_scope)
@@ -165,16 +144,16 @@ class Instrumentor:
                         new_body += self.trans_stmt(stmt, info, local_scope)
                     m.body = new_body
 
-    def trans_stmt(self, stmt: Stmt, this_method: MethodInfo, scope: Scope) -> list[Stmt]:
+    def trans_stmt(self, stmt: Stmt, this_m: MethodInfo, scope: Scope) -> list[Stmt]:
         match stmt:
             case Assign(var, value) as node:
                 match self.get_type_of_var(node, scope):
                     case None:  # infer
                         typ = self.typer.infer(value, scope)
-                        scope.update(var.name, typ)
+                        scope.update(var, typ)
                         return [stmt]
                     case typ:  # check
-                        scope.update(var.name, typ)
+                        scope.update(var, typ)
                         check = self.check_type(value, var.name, typ, scope)
                         return [stmt] + check
 
@@ -195,21 +174,22 @@ class Instrumentor:
                     body += self.check_type(arg, x, t, scope)
                     new_args.append(Var(x).copy_pos(arg))
                 # check pre
-                model_vars = [x.name for x in new_args]
-                for cond in m.subst_pre_conditions(new_args):
-                    body += [Assert(cond, (model_vars, lambda vs: SpecViolated('Pre', pretty_tree(cond),
-                                                                               zip(model_vars, vs),
-                                                                               stmt.pos)))]
+                mappings = dict(zip(m.param_names, new_args))
+                for cond in m.preconditions:
+                    trigger = ([x.name for x in new_args],
+                               lambda vs: PreconditionViolated(method.name, zip(m.param_names, vs),
+                                                               stmt.pos, cond.pos))
+                    body += [Assert(subst_expr(cond, mappings), trigger)]
                 # call
                 body += [Call(method, new_args, var=node.var).copy_pos(stmt)]
                 # check return type
                 match self.get_type_of_var(node, scope):
                     case None:  # infer: simply the method return type
                         if node.var:
-                            scope.update(node.var.name, m.return_type)
+                            scope.update(node.var, m.return_type)
                     case typ:  # check
                         assert node.var is not None
-                        scope.update(node.var.name, typ)
+                        scope.update(node.var, typ)
                         body += self.check_subtype(m.return_type, stmt.pos, node.var.name, typ)
 
                 return body
@@ -219,25 +199,27 @@ class Instrumentor:
                 return [stmt]
 
             case Return(None):
-                if this_method.return_type != UnitType():
-                    self.issuer.error(TypeMismatch(pretty_tree(this_method.return_type), 'unit', stmt.pos))
+                if this_m.return_type != UnitType():
+                    self.issuer.error(TypeMismatch(pretty_tree(this_m.return_type), 'unit', stmt.pos))
                 return [stmt]
 
             case Return(value):
-                if this_method.return_type == UnitType():
-                    self.issuer.error(TypeMismatch('unit', pretty_tree(this_method.return_type), value.pos))
+                if this_m.return_type == UnitType():
+                    self.issuer.error(TypeMismatch('unit', pretty_tree(this_m.return_type), value.pos))
                     return [stmt]
 
                 return_var = self.fresh_name()
                 body = [Assign(Ident(return_var), value)]  # evaluate return value
-                body += self.check_type(value, return_var, this_method.return_type, scope)  # check type
+                body += self.check_type(value, return_var, this_m.return_type, scope)  # check type
                 # check post condition
                 return_value = Var(return_var)
-                model_vars = this_method.param_names + [return_var]
-                for cond in this_method.subst_post_conditions(this_method.formal_args + [return_value]):
-                    body += [Assert(cond, (model_vars, lambda vs: SpecViolated('Post', pretty_tree(cond),
-                                                                               zip(model_vars, vs),
-                                                                               value.pos)))]
+                mappings = {this_m.return_param_name: return_value}
+                for cond in this_m.postconditions:
+                    trigger = (this_m.param_names + [return_var],
+                               lambda vs: PostconditionViolated(zip(this_m.param_names, vs[:-1]),
+                                                                (this_m.return_param_name, vs[-1]),
+                                                                value.pos, cond.pos))
+                    body += [Assert(subst_expr(cond, mappings), trigger)]
                 # return
                 body += [Return(return_value)]
                 return body
@@ -248,11 +230,11 @@ class Instrumentor:
                 then_scope = Scope(scope)
                 new_then = []
                 for stmt in then_body:
-                    new_then += self.trans_stmt(stmt, this_method, then_scope)
+                    new_then += self.trans_stmt(stmt, this_m, then_scope)
 
                 new_else = []
                 for stmt in else_body:
-                    new_else += self.trans_stmt(stmt, this_method, then_scope)
+                    new_else += self.trans_stmt(stmt, this_m, then_scope)
 
                 return [If(cond, new_then, new_else)]
 
@@ -262,7 +244,7 @@ class Instrumentor:
                 inner_scope = Scope(scope)
                 new_body = []
                 for stmt in body:
-                    new_body += self.trans_stmt(stmt, this_method, inner_scope)
+                    new_body += self.trans_stmt(stmt, this_m, inner_scope)
 
                 return [While(cond, new_body)]
 

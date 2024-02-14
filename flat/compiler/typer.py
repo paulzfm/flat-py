@@ -1,4 +1,5 @@
 from flat.compiler import predef
+from flat.compiler.context import Context
 from flat.compiler.errors import *
 from flat.compiler.grammar import LangObject
 from flat.compiler.issuer import Issuer
@@ -8,25 +9,16 @@ from flat.compiler.trees import *
 NormalForm = SimpleType | RefinementType
 
 
-class Scope:
+class Scope(Context[NormalForm]):
     def __init__(self, parent: Optional = None):
+        super().__init__()
         self.parent: Optional[Scope] = parent
-        self._items: dict[str, NormalForm] = {}
 
     def lookup(self, name: str) -> Optional[NormalForm]:
-        if name in self._items:
-            return self._items[name]
+        if name in self:
+            return self[name]
         if self.parent:
             return self.parent.lookup(name)
-
-    def has_defined(self, name: str) -> bool:
-        return name in self._items
-
-    def __getitem__(self, name: str) -> NormalForm:
-        return self._items[name]
-
-    def update(self, name: str, typ: NormalForm) -> None:
-        self._items[name] = typ
 
 
 def get_base_type(nf: NormalForm) -> SimpleType:
@@ -41,8 +33,8 @@ def get_base_type(nf: NormalForm) -> SimpleType:
 class Typer:
     def __init__(self, issuer: Issuer):
         self.issuer = issuer
-        self.langs: dict[str, LangObject] = {}
-        self._type_aliases: dict[str, NormalForm] = {}
+        self.langs: Context[LangObject] = Context()
+        self._type_aliases: Context[NormalForm] = Context()
 
     def normalize(self, annot: Type) -> NormalForm:
         """Expand a type (may not be simple) into normal form."""
@@ -71,21 +63,6 @@ class Typer:
                 self.issuer.error(ExpectSimpleType(annot.pos))
                 assert isinstance(base, SimpleType)
                 return base
-        # match annot:
-        #     case SimpleType() as simple:
-        #         return simple
-        #     case NamedType(x) as node:
-        #         if x in self._type_aliases:
-        #             match self._type_aliases[x]:
-        #                 case SimpleType() as simple:
-        #                     return simple
-        #                 case _:
-        #                     raise TypeError
-        #         else:
-        #             self.issuer.error(UndefinedName(node.pos))
-        #             return NoType
-        #     case _:
-        #         raise TypeError
 
     def infer(self, expr: Expr, scope: Scope) -> SimpleType:
         match expr:
@@ -147,11 +124,10 @@ class Typer:
                     case FunType(arg_types, return_type):
                         formal_scope = Scope(scope)
                         for param, t in zip(params, arg_types):
-                            if formal_scope.has_defined(param.name):
-                                tree = f'parameter {param.name} of type {pretty_tree(formal_scope[param.name])}'
-                                self.issuer.error(RedefinedName(tree, param.pos))
+                            if param.name in formal_scope:
+                                self.issuer.error(RedefinedName(formal_scope.get_pos(param.name), param.pos))
                             else:
-                                formal_scope.update(param.name, t)
+                                formal_scope.update(param.ident, t)
                         self.ensure(body, return_type, formal_scope)
                     case _:
                         self.issuer.error(TypeMismatch(pretty_tree(expected), 'fun type', expr.pos))
@@ -214,17 +190,16 @@ class Typer:
 
     def define_lang(self, ident: Ident, rules: list[Rule]) -> None:
         if ident.name in self.langs:
-            self.issuer.error(RedefinedName(f'lang {ident.name}', ident.pos))
+            self.issuer.error(RedefinedName(self.langs.get_pos(ident.name), ident.pos))
             return
         if ident.name in self._type_aliases:
-            self.issuer.error(RedefinedName(
-                f'type {ident.name} = {pretty_tree(self._type_aliases[ident.name])}', ident.pos))
+            self.issuer.error(RedefinedName(self._type_aliases.get_pos(ident.name), ident.pos))
             return
 
         grammar: dict[str, Rule] = {}
         for rule in rules:
             if rule.name in grammar:
-                self.issuer.error(RedefinedName(f'rule {grammar[rule.name]}', rule.ident.pos))
+                self.issuer.error(RedefinedName(grammar[rule.name].pos, rule.ident.pos))
             else:
                 grammar[rule.name] = rule
 
@@ -276,15 +251,14 @@ class Typer:
         for rule_name in unused:
             self.issuer.error(UnusedRule(grammar[rule_name].ident.pos))
 
-        self.langs[ident.name] = LangObject(ident.name,
-                                            dict([(rule_name, grammar[rule_name].body) for rule_name in grammar]))
-        self._type_aliases[ident.name] = RefinementType(StringType(), InLang(Var('_'), ident))
+        self.langs.update(ident, LangObject(ident.name,
+                                            dict([(rule_name, grammar[rule_name].body) for rule_name in grammar])))
+        self._type_aliases.update(ident, RefinementType(StringType(), InLang(Var('_'), ident)))
 
     def define_type_alias(self, ident: Ident, nf: NormalForm) -> None:
         if ident.name in self.langs:
-            self.issuer.error(RedefinedName(f'lang {ident.name}', ident.pos))
+            self.issuer.error(RedefinedName(self.langs.get_pos(ident.name), ident.pos))
         elif ident.name in self._type_aliases:
-            self.issuer.error(RedefinedName(
-                f'type {ident.name} = {pretty_tree(self._type_aliases[ident.name])}', ident.pos))
+            self.issuer.error(RedefinedName(self._type_aliases.get_pos(ident.name), ident.pos))
         else:
-            self._type_aliases[ident.name] = nf
+            self._type_aliases.update(ident, nf)

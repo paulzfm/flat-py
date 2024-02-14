@@ -7,6 +7,8 @@ from flat.compiler.pos import Pos
 
 
 class Tree:
+    """Interface. A tree-like object that attaches a position."""
+
     def __init__(self):
         self.pos: Optional[Pos] = None
 
@@ -22,8 +24,14 @@ class Tree:
 
 
 @dataclass
-class Ident(Tree):
+class NameTree(Tree):
+    """Interface. A tree with a `name` field."""
     name: str
+
+
+@dataclass
+class Ident(NameTree):
+    pass
 
 
 class Expr(Tree):
@@ -195,8 +203,8 @@ class FunType(SimpleType):
 
 
 @dataclass
-class NamedType(Type):
-    name: str
+class NamedType(Type, NameTree):
+    pass
 
 
 @dataclass
@@ -217,8 +225,8 @@ class Param(Tree):
 
 # --- Expressions ---
 @dataclass
-class Var(Expr):
-    name: str
+class Var(Expr, NameTree):
+    pass
 
 
 @dataclass
@@ -319,14 +327,14 @@ class Call(Stmt):
 
 @dataclass
 class Assert(Stmt):
+    """
+    :param cond: condition
+    :param error_trigger: If provided, the specified runtime error will be raised. It consists of two parts:
+    - a list of variable names (the actual name at runtime) whose value should be extracted (by the Executor), and
+    - a lambda expression that outputs the wanted RuntimeTypeError from the extracted values (pretty-printed).
+    """
     cond: Expr
     error_trigger: Optional[Tuple[list[str], Callable[[list[str]], RuntimeTypeError]]] = None
-
-
-@dataclass
-class AssertSatisfy(Stmt):
-    cond: Expr
-    model_vars: dict[str, Optional[str]]  # name at runtime -> optional human-readable name/note
 
 
 @dataclass
