@@ -1,0 +1,33 @@
+lang Options {
+    start: option (ws option)*;
+    option: opt_debug | opt_bound;
+    opt_debug: "--debug"?;
+    opt_bound: "-k" ws bound;
+    bound: [1-9];
+    ws: " "+;
+}
+
+method debug_mode(opt: Options): (b: bool)
+    ensures if seq_forall(opt @* Options:opt_debug, empty) then !b else b
+{
+    return contains(opt, "--debug");
+}
+
+method get_bound(opt: Options): (k: int)
+    requires !seq_empty(opt @* Options:bound)
+    ensures k == int(seq_last(opt @* Options:bound))
+{
+    digit = nth(opt, rfind(opt, "-k") + 3);
+    return int(digit);
+}
+
+method main(): unit
+{
+    call debug_mode("");
+    call debug_mode("--debug");
+    call debug_mode("-k  4  --debug");
+    k = call get_bound("--debug -k 5 -k 7");
+    assert k == 7;
+    // call get_bound("--debug -k 5 -k one");
+    return;
+}

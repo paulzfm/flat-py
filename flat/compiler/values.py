@@ -29,7 +29,7 @@ class Nothing(Value):
 
 
 @dataclass
-class ListValue(Value):
+class SeqValue(Value):
     values: list[Value]
 
 
@@ -52,7 +52,7 @@ def pretty_value(value: Value) -> str:
             return quote(s)
         case Nothing():
             return 'none'
-        case ListValue(values):
+        case SeqValue(values):
             return '[' + ', '.join([pretty_value(v) for v in values]) + ']'
         case FunObject(name):
             return f'<function {name}>'

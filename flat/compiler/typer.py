@@ -107,7 +107,7 @@ class Typer:
                         pass
                     case o:
                         self.ensure_valid_path(o, path, absolute_path, not select_all)
-                return ListType(StringType()) if select_all else StringType()
+                return SeqType() if select_all else StringType()
             case IfThenElse(cond, then_branch, else_branch):
                 self.ensure(cond, BoolType(), scope)
                 t = self.infer(then_branch, scope)
@@ -149,8 +149,6 @@ class Typer:
         match lower, upper:
             case (_, TopType()):
                 return True
-            case (ListType(t1), ListType(t2)):
-                return self.is_subtype(t1, t2)
             case (FunType(ts1, t1), FunType(ts2, t2)) if len(ts1) == len(ts2):
                 return self.is_subtype(t1, t2) and all([self.is_subtype(y, x) for x, y in zip(ts1, ts2)])
             case _:
@@ -176,16 +174,16 @@ class Typer:
             symbols = path[1:]
             match lang.count(last_symbol.name, 'start', False):
                 case 0:
-                    raise TypeError(f'unreachable symbol {last_symbol}')
+                    self.issuer.error(InvalidPath('unreachable symbol', last_symbol.pos))
                 case 2 if require_unique:
-                    raise TypeError(f'path not unique, as there may exist multiple node labelled with {last_symbol}')
+                    self.issuer.error(InvalidPath('path may not be unique', last_symbol.pos))
 
         for symbol in symbols:
             match lang.count(symbol.name, last_symbol.name, True):
                 case 0:
-                    raise TypeError(f'unreachable symbol {symbol}')
+                    self.issuer.error(InvalidPath('unreachable symbol', symbol.pos))
                 case 2 if require_unique:
-                    raise TypeError(f'path not unique, as there may exist multiple node labelled with {symbol}')
+                    self.issuer.error(InvalidPath('path may not be unique', symbol.pos))
             last_symbol = symbol
 
     def define_lang(self, ident: Ident, rules: list[Rule]) -> None:

@@ -19,7 +19,7 @@ method date_in_leap_year(date: Date): (b: bool)
     return year % 4 == 0;
 }
 
-method entry(): unit
+method main(): unit
 {
     b = call date_in_leap_year("2024-02-09");
     assert b;

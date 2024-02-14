@@ -129,10 +129,7 @@ builtin_type = positional(alt(
     token('string').result(StringType()),
     token('unit').result(UnitType())
 ))
-list_type = positional(
-    bracket(simple_type).map(ListType)
-)
-simple_type.become(expr_parser(builtin_type | list_type, [
+simple_type.become(expr_parser(builtin_type, [
     InfixR(token('->').result(lambda t1, t2: FunType([t1], t2).copy_pos(t1, t2))),
     Prefix(with_pos(paren(simple_type.sep_by(comma))).combine(
         lambda ts, pos: lambda t: FunType(ts, t).set_pos(Pos(pos.start, t.pos.end))) << token('->'))

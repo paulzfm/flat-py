@@ -21,7 +21,7 @@ method compute_fib(n: nat): (y: nat)
     return b;
 }
 
-method entry(): unit
+method main(): unit
 {
     n = 0;
     while n < 10

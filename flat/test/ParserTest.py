@@ -11,15 +11,12 @@ class ParserTest(unittest.TestCase):
         self.assertEqual(simple_type.parse('string'), StringType())
         self.assertEqual(simple_type.parse('unit'), UnitType())
 
-    def test_parse_list_type(self):
-        self.assertEqual(simple_type.parse('[int]'), ListType(IntType()))
-
     def test_parse_fun_types(self):
         int_to_int = FunType([IntType()], IntType())
         self.assertEqual(simple_type.parse('int -> int'), int_to_int)
         self.assertEqual(simple_type.parse('() -> string'), FunType([], StringType()))
-        self.assertEqual(simple_type.parse('([bool], int -> int) -> int -> int'),
-                         FunType([ListType(BoolType()), int_to_int], int_to_int))
+        self.assertEqual(simple_type.parse('(bool, int -> int) -> int -> int'),
+                         FunType([BoolType(), int_to_int], int_to_int))
 
     def test_parse_named_type(self):
         self.assertEqual(typ.parse('Email'), NamedType('Email'))

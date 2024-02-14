@@ -4,7 +4,7 @@ from flat.compiler.trees import *
 
 
 def quote(text: str) -> str:
-    return eval('text')
+    return '"' + eval('text') + '"'
 
 
 class IndentPrinter:
@@ -107,10 +107,10 @@ def pretty_tree(tree: Tree | list[Tree], spaces: int = 4) -> str:
                 to.write('string')
             case UnitType():
                 to.write('unit')
-            case ListType(elem):
-                to.write('[')
-                print_tree(elem)
-                to.write(']')
+            case SeqType():
+                to.write('seq')
+            case SimpleType() as t if t == NoType:
+                to.write('?')
             case FunType(args, returns):
                 if len(args) == 1:
                     print_tree(args[0])
@@ -245,6 +245,7 @@ def pretty_tree(tree: Tree | list[Tree], spaces: int = 4) -> str:
             case LangDef(ident, _):
                 to.write('lang ')
                 print_tree(ident)
+                to.write_line()
             case FunDef(ident, params, return_annot, value):
                 to.write('fun ')
                 print_tree(ident)

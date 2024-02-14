@@ -44,7 +44,7 @@ class Executor:
         self._issuer.print()
         sys.exit(1)
 
-    def run(self, program: list[Def], entry: str = 'entry') -> Value:
+    def run(self, program: list[Def], entry: str = 'main') -> Value:
         for tree in program:
             self.load(tree)
         if entry not in self._functions:
@@ -143,14 +143,20 @@ class Executor:
             case Var(name):
                 if name in self._top_frame:
                     return self._top_frame.get_value(name)
-                raise RuntimeError
+                match predef.typ(name):
+                    case FunType(ts, _):
+                        names = [f'_{i}' for i in range(len(ts))]
+                        wrapper = Lambda([Ident(x) for x in names], App(Var(name), [Var(x) for x in names]))
+                        return self.eval(wrapper)
+                    case _:
+                        raise RuntimeError(f'undefined name in current frame: {name}')
             case Lambda(params, body):
                 return FunObject('<lambda>', [param.name for param in params], [Return(body)])
             case App(fun, args):
                 arg_values = [self.eval(arg) for arg in args]
                 match fun:
                     case Var(f):
-                        match predef.apply(f, arg_values):
+                        match self.apply_predef(f, arg_values):
                             case None:  # not a predefined function
                                 if f in self._top_frame:
                                     match self._top_frame.get_value(f):
@@ -178,7 +184,7 @@ class Executor:
                         p = [symbol.name for symbol in path]
                         if select_all:
                             values = [StringValue(s) for s in o.select_all(word, p, is_abs)]
-                            return ListValue(values)
+                            return SeqValue(values)
                         else:
                             return StringValue(o.select_unique(word, p, is_abs))
                     case v:
@@ -193,3 +199,84 @@ class Executor:
                         raise RuntimeError
             case _:
                 raise RuntimeError
+
+    def apply_predef(self, fun: str, args: list[Value]) -> Optional[Value]:
+        match fun, args:
+            case 'prefix_-', [IntValue(n)]:
+                return IntValue(-n)
+            case 'prefix_!', [BoolValue(b)]:
+                return BoolValue(not b)
+            case '+', [IntValue(n1), IntValue(n2)]:
+                return IntValue(n1 + n2)
+            case '-', [IntValue(n1), IntValue(n2)]:
+                return IntValue(n1 - n2)
+            case '*', [IntValue(n1), IntValue(n2)]:
+                return IntValue(n1 * n2)
+            case '/', [IntValue(n1), IntValue(n2)]:
+                return IntValue(n1 // n2)
+            case '%', [IntValue(n1), IntValue(n2)]:
+                return IntValue(n1 % n2)
+            case '>=', [IntValue(n1), IntValue(n2)]:
+                return BoolValue(n1 >= n2)
+            case '<=', [IntValue(n1), IntValue(n2)]:
+                return BoolValue(n1 <= n2)
+            case '>', [IntValue(n1), IntValue(n2)]:
+                return BoolValue(n1 > n2)
+            case '<', [IntValue(n1), IntValue(n2)]:
+                return BoolValue(n1 < n2)
+            case '==', [v1, v2]:
+                return BoolValue(v1 == v2)
+            case '!=', [v1, v2]:
+                return BoolValue(v1 != v2)
+            case '&&', [BoolValue(b1), BoolValue(b2)]:
+                return BoolValue(b1 and b2)
+            case '||', [BoolValue(b1), BoolValue(b2)]:
+                return BoolValue(b1 or b2)
+            # string
+            case 'empty', [StringValue(s)]:
+                return BoolValue(s == '')
+            case 'length', [StringValue(s)]:
+                return IntValue(len(s))
+            case 'concat', [StringValue(s1), StringValue(s2)]:
+                return StringValue(s1 + s2)
+            case 'nth', [StringValue(s), IntValue(k)]:
+                return StringValue(s[k])
+            case 'substring', [StringValue(s), IntValue(start), IntValue(end)]:
+                return StringValue(s[start:end])
+            case 'contains', [StringValue(s), StringValue(s1)]:
+                return BoolValue(s1 in s)
+            case 'find', [StringValue(s), StringValue(s1)]:
+                return IntValue(s.find(s1))
+            case 'rfind', [StringValue(s), StringValue(s1)]:
+                return IntValue(s.rfind(s1))
+            case 'int', [StringValue(s)]:
+                return IntValue(int(s))
+            # seq functions
+            case 'seq_empty', [SeqValue(xs)]:
+                return BoolValue(len(xs) == 0)
+            case 'seq_forall', [SeqValue(xs), FunObject() as f]:
+                for x in xs:
+                    match self.call(f, [x]):
+                        case BoolValue(True):
+                            pass
+                        case BoolValue(False):
+                            return BoolValue(False)
+                        case _:
+                            raise RuntimeError
+                return BoolValue(True)
+            case 'seq_exists', [SeqValue(xs), FunObject() as f]:
+                for x in xs:
+                    match self.call(f, [x]):
+                        case BoolValue(True):
+                            return BoolValue(True)
+                        case BoolValue(False):
+                            pass
+                        case _:
+                            raise RuntimeError
+                return BoolValue(False)
+            case 'seq_first', [SeqValue(xs)]:
+                return xs[0]
+            case 'seq_last', [SeqValue(xs)]:
+                return xs[-1]
+            case _:
+                return None

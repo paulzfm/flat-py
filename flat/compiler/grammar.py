@@ -21,16 +21,16 @@ class Converter:
         for symbol in clauses:
             label = f'<{symbol}>'
             match clauses[symbol]:
-                case Alt(clauses):
-                    self._grammar[label] += [self._convert(clause) for clause in clauses]
-                case clause:
-                    self._grammar[label].append(self._convert(clause))
+                case Alt(cs):
+                    self._grammar[label] += [self._convert(c) for c in cs]
+                case c:
+                    self._grammar[label].append(self._convert(c))
 
         assert is_valid_grammar(self._grammar)
         return self._grammar
 
     def _fresh_name(self) -> str:
-        fresh_name = f'<+{str(self._next_counter)}>'
+        fresh_name = f'<-{str(self._next_counter)}>'
         self._next_counter += 1
         return fresh_name
 
@@ -55,9 +55,13 @@ class Converter:
                     self._grammar[nonterminal] = [element * k for k in range(k1, k2 + 1)]
                 else:  # infinite
                     required = element * k1
-                    optionals = self._fresh_name()
-                    self._grammar[optionals] = ['', element + optionals]
-                    self._grammar[nonterminal] = required + optionals
+                    if required == '':  # save a fresh symbol;
+                        # look like ISLA may have problems in parsing if introducing a redundant symbol?
+                        self._grammar[nonterminal] = ['', element + nonterminal]
+                    else:
+                        optionals = self._fresh_name()
+                        self._grammar[optionals] = ['', element + optionals]
+                        self._grammar[nonterminal] = [required + optionals]
                 return nonterminal
             case Seq(clauses):
                 return ''.join([self._convert(clause) for clause in clauses])
@@ -73,6 +77,7 @@ class LangObject:
 
     def __init__(self, name: str, clauses: dict[str, Clause]):
         self.name = name
+        assert isinstance(clauses, dict)
         self.clauses = clauses
         self._solver_volume: int = 10
         self._isla_solver: Optional[ISLaSolver] = None
@@ -136,7 +141,7 @@ class LangObject:
             for child in within.children:
                 if child.value == of:
                     out.append(child)
-                if child.value.startswith('<+'):  # skip fresh nodes, as they do not exist in the original grammar
+                if child.value.startswith('<-'):  # skip fresh nodes, as they do not exist in the original grammar
                     collect_children(of, child, out)
 
         root = self.isla_solver.parse(word, skip_check=True)

@@ -192,8 +192,8 @@ class UnitType(SimpleType):
 
 
 @dataclass
-class ListType(SimpleType):
-    elem: SimpleType
+class SeqType(SimpleType):
+    pass
 
 
 @dataclass
