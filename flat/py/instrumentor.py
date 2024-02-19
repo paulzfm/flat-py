@@ -108,12 +108,14 @@ class Instrumentor(ast.NodeTransformer):
         ctx = FunContext()
 
         # check arg types
+        k = 0
         for arg in node.args.args:
+            k += 1
             name = arg.arg
             ctx.param_names += [name]
             if arg.annotation and self.needs_check(arg.annotation):
                 ctx.type_annots[name] = arg.annotation
-                body += [call_flat(assert_arg_type, load(name), name, arg.annotation)]
+                body += [call_flat(assert_arg_type, load(name), k, node.name, arg.annotation)]
 
         # check pre and remember post
         arg_names = [x for x in ctx.param_names]
@@ -121,8 +123,9 @@ class Instrumentor(ast.NodeTransformer):
         for decorator in node.decorator_list:
             match decorator:
                 case ast.Call(ast.Name('requires'), [cond]):
-                    body += [call_flat(assert_pre, cond, location_of(cond),
-                                       ast.List([ast.Tuple([const(x), load(x)]) for x in arg_names]))]
+                    body += self.track_lineno(cond.lineno)
+                    body += [call_flat(assert_pre, cond,
+                                       ast.List([ast.Tuple([const(x), load(x)]) for x in arg_names]), node.name)]
                     processed.append(decorator)  # to remove it
                 case ast.Call(ast.Name('ensures'), [predicate]):
                     ctx.postconditions += [predicate]
@@ -155,7 +158,7 @@ class Instrumentor(ast.NodeTransformer):
         for target in node.targets:
             for var in vars_in_target(target):
                 if var in ctx.type_annots:
-                    body += [call_flat(assert_type, node.value, node.value.col_offset + 1, ctx.type_annots[var])]
+                    body += [call_flat(assert_type, node.value, ctx.type_annots[var])]
 
         return body
 
@@ -170,7 +173,7 @@ class Instrumentor(ast.NodeTransformer):
             case ast.Name(var):
                 if self.needs_check(node.annotation):
                     ctx.type_annots[var] = node.annotation
-                    body += [call_flat(assert_type, node.value, node.value.col_offset + 1, ctx.type_annots[var])]
+                    body += [call_flat(assert_type, node.value, ctx.type_annots[var])]
             case _:
                 raise TypeError
 
@@ -186,7 +189,7 @@ class Instrumentor(ast.NodeTransformer):
         match node.target:
             case ast.Name(var):
                 if var in ctx.type_annots:
-                    body += [call_flat(assert_type, node.value, node.value.col_offset + 1, ctx.type_annots[var])]
+                    body += [call_flat(assert_type, node.value, ctx.type_annots[var])]
 
         return body
 
@@ -195,13 +198,15 @@ class Instrumentor(ast.NodeTransformer):
         body = self.track_lineno(node.lineno)
         body += [assign('__return__', node.value)]
         if ctx.returns is not None and node.value is not None:
-            body += [call_flat(assert_type, load('__return__'), node.value.col_offset + 1, ctx.returns)]
+            body += [call_flat(assert_type, load('__return__'), ctx.returns)]
 
         arg_names = [x for x in ctx.param_names]
         for cond in ctx.postconditions:
-            body += [call_flat(assert_post, cond, location_of(cond),
+            body += self.track_lineno(cond.lineno)
+            body += [call_flat(assert_post, cond,
                                ast.List([ast.Tuple([const(x), load(x)]) for x in arg_names]),
-                               load('__return__'), node.value.col_offset + 1)]
+                               load('__return__'))]
+        body += self.track_lineno(node.lineno)
         body += [node]
         return body
 
