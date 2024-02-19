@@ -1,8 +1,7 @@
 import ast
 from typing import Optional
 
-from flat.compiler.grammar import LangObject
-from flat.py import RefinementType
+from flat.py.runtime import *
 
 TypeAnnot = ast.expr
 
@@ -38,6 +37,10 @@ def apply(fun: str | ast.expr, *args: int | str | ast.expr) -> ast.Call:
     return ast.Call(fun, exprs, keywords=[])
 
 
+def cbn(value: ast.expr) -> ast.Lambda:
+    return ast.Lambda(ast.arguments([], [], None, [], [], None, []), value)
+
+
 def location_of(node: ast.AST) -> ast.Tuple:
     return ast.Tuple([const(node.lineno), const(node.col_offset + 1)])
 
@@ -57,7 +60,15 @@ def assign(var: str, with_value: ast.expr) -> ast.Assign:
     return ast.Assign([ast.Name(var, ctx=ast.Store())], with_value)
 
 
+def call_flat(fun: Callable, *args: int | str | ast.expr) -> ast.Expr:
+    return ast.Expr(apply(ast.Attribute(load('__flat__'), fun.__name__, ctx=ast.Load()), *args))
+
+
 class Instrumentor(ast.NodeTransformer):
+    def __init__(self):
+        self._inside_body = False
+        self._last_lineno = 0
+
     def __call__(self, source_name: str, code: str) -> str:
         self._source_file = source_name
         self._env = {}
@@ -66,21 +77,35 @@ class Instrumentor(ast.NodeTransformer):
         tree = ast.parse(code)
         self._ctx_stack: list[FunContext] = []
         self.visit(tree)
-        import_runtime = ast.parse('from flat.py.runtime import *').body[0]
+        import_runtime = ast.parse('from flat.py import runtime as __flat__').body[0]
+        set_source = ast.parse(f'__source__ = "{self._source_file}"').body[0]
         tree.body.insert(0, import_runtime)
+        tree.body.insert(1, set_source)
+        call_main = ast.parse('main()').body[0]
+        tree.body.append(call_main)
         ast.fix_missing_locations(tree)
         return ast.unparse(tree)
 
+    def track_lineno(self, lineno: int) -> list[ast.stmt]:
+        assert self._inside_body
+        body = []
+        if lineno != self._last_lineno:
+            body += [assign('__line__', const(lineno))]
+            self._last_lineno = lineno
+
+        return body
+
     def needs_check(self, type_annot: ast.expr) -> bool:
         match eval(ast.unparse(type_annot), {}, self._env):
-            case LangObject() | RefinementType():
+            case LangType() | RefinementType():
                 return True
             case _:
                 return False
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self._inside_body = True
+        body = self.track_lineno(node.lineno)
         ctx = FunContext()
-        body = []
 
         # check arg types
         for arg in node.args.args:
@@ -88,21 +113,16 @@ class Instrumentor(ast.NodeTransformer):
             ctx.param_names += [name]
             if arg.annotation and self.needs_check(arg.annotation):
                 ctx.type_annots[name] = arg.annotation
-                body += [call('assert_true',
-                              apply('has_type', load(name), arg.annotation),
-                              apply('ArgTypeMismatch', name, ast.unparse(arg.annotation),
-                                    self._source_file, location_of(arg)))]
+                body += [call_flat(assert_arg_type, load(name), name, arg.annotation)]
 
         # check pre and remember post
-        args = [load(x) for x in ctx.param_names]
+        arg_names = [x for x in ctx.param_names]
         processed = []
         for decorator in node.decorator_list:
             match decorator:
-                case ast.Call(ast.Name('requires'), [predicate]):
-                    body += [call('assert_true',
-                                  apply(predicate, *args),
-                                  apply('PreconditionViolated', self._source_file, location_of(predicate),
-                                        ast.List(args)))]
+                case ast.Call(ast.Name('requires'), [cond]):
+                    body += [call_flat(assert_pre, cond, location_of(cond),
+                                       ast.List([ast.Tuple([const(x), load(x)]) for x in arg_names]))]
                     processed.append(decorator)  # to remove it
                 case ast.Call(ast.Name('ensures'), [predicate]):
                     ctx.postconditions += [predicate]
@@ -122,6 +142,7 @@ class Instrumentor(ast.NodeTransformer):
         # update body
         node.body = body
         self._ctx_stack.pop()
+        self._inside_body = False
         return node
 
     def visit_Assign(self, node: ast.Assign) -> list[ast.stmt]:
@@ -129,11 +150,12 @@ class Instrumentor(ast.NodeTransformer):
             return [node]
 
         ctx = self._ctx_stack[-1]
-        body = [node]
+        body = self.track_lineno(node.lineno)
+        body += [node]
         for target in node.targets:
             for var in vars_in_target(target):
                 if var in ctx.type_annots:
-                    body.append(make_check_type(node.value, var, ctx.type_annots[var]))
+                    body += [call_flat(assert_type, node.value, node.value.col_offset + 1, ctx.type_annots[var])]
 
         return body
 
@@ -142,12 +164,13 @@ class Instrumentor(ast.NodeTransformer):
             return [node]
 
         ctx = self._ctx_stack[-1]
-        body = [node]
+        body = self.track_lineno(node.lineno)
+        body += [node]
         match node.target:
             case ast.Name(var):
                 if self.needs_check(node.annotation):
                     ctx.type_annots[var] = node.annotation
-                    body.append(make_check_type(node.value, var, node.annotation))
+                    body += [call_flat(assert_type, node.value, node.value.col_offset + 1, ctx.type_annots[var])]
             case _:
                 raise TypeError
 
@@ -158,29 +181,42 @@ class Instrumentor(ast.NodeTransformer):
             return [node]
 
         ctx = self._ctx_stack[-1]
-        body = [node]
+        body = self.track_lineno(node.lineno)
+        body += [node]
         match node.target:
             case ast.Name(var):
                 if var in ctx.type_annots:
-                    body.append(make_check_type(node.value, var, ctx.type_annots[var]))
+                    body += [call_flat(assert_type, node.value, node.value.col_offset + 1, ctx.type_annots[var])]
 
         return body
 
     def visit_Return(self, node: ast.Return) -> list[ast.stmt]:
         ctx = self._ctx_stack[-1]
-        body = [assign('__return__', node.value)]
+        body = self.track_lineno(node.lineno)
+        body += [assign('__return__', node.value)]
         if ctx.returns is not None and node.value is not None:
-            body.append(make_check_type(node.value, '__return__', ctx.returns))
+            body += [call_flat(assert_type, load('__return__'), node.value.col_offset + 1, ctx.returns)]
 
-        args = [load(x) for x in ctx.param_names] + [load('__return__')]
-        for predicate in ctx.postconditions:
-            body += [call('assert_true',
-                          apply(predicate, *args),
-                          apply('PostconditionViolated', self._source_file,
-                                location_of(predicate), location_of(node.value), ast.List(args)))]
-
+        arg_names = [x for x in ctx.param_names]
+        for cond in ctx.postconditions:
+            body += [call_flat(assert_post, cond, location_of(cond),
+                               ast.List([ast.Tuple([const(x), load(x)]) for x in arg_names]),
+                               load('__return__'), node.value.col_offset + 1)]
         body += [node]
         return body
+
+    def generic_visit(self, node: ast.AST):
+        if self._inside_body and isinstance(node, ast.stmt):
+            body = self.track_lineno(node.lineno)
+            match super().generic_visit(node):
+                case ast.stmt() as s:
+                    body.append(s)
+                case list() as ss:
+                    body += ss
+
+            return body
+
+        return super().generic_visit(node)
 
 
 def vars_in_target(expr: ast.expr) -> list[str]:

@@ -27,6 +27,8 @@ class Converter:
                     self._grammar[label].append(self._convert(c))
 
         assert is_valid_grammar(self._grammar)
+        # print('converted grammar:')
+        # print(self._grammar)
         return self._grammar
 
     def _fresh_name(self) -> str:
@@ -144,7 +146,11 @@ class LangObject:
                 if child.value.startswith('<-'):  # skip fresh nodes, as they do not exist in the original grammar
                     collect_children(of, child, out)
 
-        root = self.isla_solver.parse(word, skip_check=True)
+        try:
+            root = self.isla_solver.parse(word, skip_check=True)
+        except SyntaxError:
+            return []
+
         labels = [f'<{name}>' for name in path]
         if is_absolute:  # select from the root
             trees = [root]

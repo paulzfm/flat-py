@@ -1,12 +1,43 @@
 import sys
 from dataclasses import dataclass
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Tuple
+
+from frozenlist import FrozenList
 
 from flat.compiler.grammar import LangObject
 from flat.compiler.issuer import Issuer
 from flat.compiler.lang_validator import LangValidator
 from flat.compiler.parser import Parser
 from flat.compiler.trees import LangDef
+
+
+@dataclass
+class LangType(str):
+    obj: LangObject
+
+    def __str__(self):
+        return self.obj.name
+
+
+def parse_xpath(xpath: str) -> Tuple[bool, list[str]]:
+    if xpath.startswith('/'):
+        is_abs = True
+        path = xpath[1:].split('/')
+    else:
+        is_abs = False
+        path = xpath.split('/')
+
+    return is_abs, path
+
+
+def select(word: str, lang_type: LangType, xpath: str) -> str:
+    is_abs, path = parse_xpath(xpath)
+    return lang_type.obj.select_unique(word, path, is_abs)
+
+
+def select_all(word: str, lang_type: LangType, xpath: str) -> FrozenList[str]:
+    is_abs, path = parse_xpath(xpath)
+    return FrozenList(lang_type.obj.select_all(word, path, is_abs))
 
 
 class PyLangValidator(LangValidator):
@@ -17,13 +48,13 @@ class PyLangValidator(LangValidator):
             return None
 
         match value:
-            case LangObject() as obj:
+            case LangType(obj):
                 return obj
             case _:
                 return None
 
 
-def lang(name: str, grammar_rules: str) -> LangObject:
+def lang(name: str, grammar_rules: str) -> LangType:
     source = 'lang ' + name + ' {' + grammar_rules + '}\n'
     issuer = Issuer(source.splitlines())
     parser = Parser(issuer)
@@ -36,13 +67,16 @@ def lang(name: str, grammar_rules: str) -> LangObject:
     if issuer.has_errors():
         issuer.print()
         sys.exit(1)
-    return obj
+    return LangType(obj)
 
 
 @dataclass
 class RefinementType:
     base: type | LangObject
     cond: Callable
+
+    def __str__(self):
+        return '{' + f'{self.base} | {self.cond}' + '}'
 
 
 def refine(base_type: type | LangObject, refinement: Callable) -> RefinementType:

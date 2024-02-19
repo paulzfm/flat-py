@@ -28,6 +28,6 @@ method main(): unit
     call debug_mode("-k  4  --debug");
     k = call get_bound("--debug -k 5 -k 7");
     assert k == 7;
-    // call get_bound("--debug -k 5 -k one");
+    // call get_bound("--debug -k 5 -k -1");
     return;
 }
