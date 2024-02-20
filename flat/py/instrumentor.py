@@ -18,8 +18,15 @@ def load(name: str) -> ast.Name:
     return ast.Name(name, ctx=ast.Load())
 
 
-def const(value: int | str) -> ast.Constant:
+def const(value: int | str | None) -> ast.Constant:
     return ast.Constant(value)
+
+
+def assign(var: str, value: ast.expr | int) -> ast.Assign:
+    if isinstance(value, int):
+        value = ast.Constant(value)
+
+    return ast.Assign([ast.Name(var, ctx=ast.Store())], value)
 
 
 def apply(fun: str | ast.expr, *args: int | str | ast.expr) -> ast.Call:
@@ -29,81 +36,66 @@ def apply(fun: str | ast.expr, *args: int | str | ast.expr) -> ast.Call:
     for arg in args:
         match arg:
             case int() as n:
-                exprs += [const(n)]
+                exprs += [ast.Constant(n)]
             case str() as s:
-                exprs += [const(s)]
+                exprs += [ast.Constant(s)]
             case ast.expr() as e:
                 exprs += [e]
     return ast.Call(fun, exprs, keywords=[])
 
 
-def cbn(value: ast.expr) -> ast.Lambda:
-    return ast.Lambda(ast.arguments([], [], None, [], [], None, []), value)
-
-
-def location_of(node: ast.AST) -> ast.Tuple:
-    return ast.Tuple([const(node.lineno), const(node.col_offset + 1)])
-
-
-def call(fun: str | ast.expr, *args: int | str | ast.expr) -> ast.Expr:
-    return ast.Expr(apply(fun, *args))
-
-
-def make_check_type(expr: ast.expr, as_var: str, expected_type: ast.expr) -> ast.stmt:
-    return (call('assert_true',
-                 apply('has_type', load(as_var), expected_type),
-                 apply('TypeMismatch', const(as_var), const(ast.unparse(expected_type)),
-                       const(''), location_of(expr))))
-
-
-def assign(var: str, with_value: ast.expr) -> ast.Assign:
-    return ast.Assign([ast.Name(var, ctx=ast.Store())], with_value)
+def apply_flat(fun: Callable, *args: int | str | ast.expr) -> ast.Call:
+    return apply(ast.Attribute(load('__flat__'), fun.__name__, ctx=ast.Load()), *args)
 
 
 def call_flat(fun: Callable, *args: int | str | ast.expr) -> ast.Expr:
-    return ast.Expr(apply(ast.Attribute(load('__flat__'), fun.__name__, ctx=ast.Load()), *args))
+    return ast.Expr(apply_flat(fun, *args))
 
 
 class Instrumentor(ast.NodeTransformer):
     def __init__(self):
-        self._inside_body = False
+        # self._inside_body = False
         self._last_lineno = 0
+        self._next_id = 0
+        self._case_guards: list[ast.expr] = []
 
-    def __call__(self, source_name: str, code: str) -> str:
-        self._source_file = source_name
+    def __call__(self, source: str, code: str) -> str:
         self._env = {}
         exec(code, {}, self._env)
 
         tree = ast.parse(code)
         self._ctx_stack: list[FunContext] = []
+        self._last_lineno = 0
         self.visit(tree)
         import_runtime = ast.parse('from flat.py import runtime as __flat__').body[0]
-        set_source = ast.parse(f'__source__ = "{self._source_file}"').body[0]
+        set_source = ast.parse(f'__source__ = "{source}"').body[0]
         tree.body.insert(0, import_runtime)
         tree.body.insert(1, set_source)
-        call_main = ast.parse('main()').body[0]
-        tree.body.append(call_main)
         ast.fix_missing_locations(tree)
         return ast.unparse(tree)
 
     def track_lineno(self, lineno: int) -> list[ast.stmt]:
-        assert self._inside_body
+        # assert self._inside_body
         body = []
         if lineno != self._last_lineno:
-            body += [assign('__line__', const(lineno))]
+            body += [assign('__line__', lineno)]
             self._last_lineno = lineno
 
         return body
 
-    def needs_check(self, type_annot: ast.expr) -> bool:
+    def needs_check(self, type_annot: TypeAnnot) -> bool:
         match eval(ast.unparse(type_annot), {}, self._env):
             case LangType() | RefinementType():
                 return True
             case _:
                 return False
 
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
-        self._inside_body = True
+    def fresh_name(self) -> str:
+        self._next_id += 1
+        return f'_{self._next_id}'
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.stmt:
+        # self._inside_body = True
         body = self.track_lineno(node.lineno)
         ctx = FunContext()
 
@@ -142,13 +134,18 @@ class Instrumentor(ast.NodeTransformer):
                 case list() as ss:
                     body += ss
 
-        # update body
-        node.body = body
+        # update body and return
         self._ctx_stack.pop()
-        self._inside_body = False
-        return node
+        if node.name == 'main' and len(node.args.args) == 0:
+            name_eq_main = ast.Compare(load('__name__'), [ast.Eq()], [const('__main__')], type_ignores=[])
+            return ast.If(name_eq_main, body, orelse=[])
+        else:
+            node.body = body
+            # self._inside_body = False
+            return node
 
     def visit_Assign(self, node: ast.Assign) -> list[ast.stmt]:
+        node.value = self.visit(node.value)
         if len(self._ctx_stack) == 0:
             return [node]
 
@@ -163,6 +160,8 @@ class Instrumentor(ast.NodeTransformer):
         return body
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> list[ast.stmt]:
+        if node.value:
+            node.value = self.visit(node.value)
         if len(self._ctx_stack) == 0:
             return [node]
 
@@ -180,6 +179,7 @@ class Instrumentor(ast.NodeTransformer):
         return body
 
     def visit_AugAssign(self, node: ast.AugAssign) -> list[ast.stmt]:
+        node.value = self.visit(node.value)
         if len(self._ctx_stack) == 0:
             return [node]
 
@@ -194,10 +194,18 @@ class Instrumentor(ast.NodeTransformer):
         return body
 
     def visit_Return(self, node: ast.Return) -> list[ast.stmt]:
+        if node.value:
+            node.value = self.visit(node.value)
+        else:
+            node.value = const(None)
+
         ctx = self._ctx_stack[-1]
         body = self.track_lineno(node.lineno)
+        if ctx.returns is None and len(ctx.postconditions) == 0:  # no check, just return
+            return body + [node]
+
         body += [assign('__return__', node.value)]
-        if ctx.returns is not None and node.value is not None:
+        if ctx.returns:
             body += [call_flat(assert_type, load('__return__'), ctx.returns)]
 
         arg_names = [x for x in ctx.param_names]
@@ -207,18 +215,55 @@ class Instrumentor(ast.NodeTransformer):
                                ast.List([ast.Tuple([const(x), load(x)]) for x in arg_names]),
                                load('__return__'))]
         body += self.track_lineno(node.lineno)
-        body += [node]
+        body += [ast.Return(load('__return__'))]
         return body
 
+    def visit_Call(self, node: ast.Call):
+        match node:
+            case ast.Call(ast.Name('isinstance'), [obj, typ]) if self.needs_check(typ):
+                return apply_flat(has_type, obj, typ)
+            case _:
+                return super().generic_visit(node)
+
+    def visit_Match(self, node: ast.Match):
+        node.subject = self.visit(node.subject)
+        new_cases = []
+        for case in node.cases:
+            self._case_guards = []
+            case = self.visit(case)
+            if len(self._case_guards) > 0:
+                cond = ast.BoolOp(ast.And(), self._case_guards)
+                case.guard = cond if case.guard is None else ast.BoolOp(ast.And(), [case.guard, cond])
+            new_cases.append(case)
+        node.cases = new_cases
+
+        return node
+
+    def visit_MatchAs(self, node: ast.MatchAs):
+        match node:
+            case ast.MatchAs(ast.MatchClass(cls, [], [], []), x) if self.needs_check(cls):
+                self._case_guards.append(apply_flat(has_type, load(x), cls))
+                return ast.MatchAs(None, x)
+            case _:
+                return super().generic_visit(node)
+
+    def visit_MatchClass(self, node: ast.MatchClass):
+        match node:
+            case ast.MatchClass(cls, [], [], []) if self.needs_check(cls):
+                x = self.fresh_name()
+                self._case_guards.append(apply_flat(has_type, load(x), cls))
+                return ast.MatchAs(None, x)
+            case _:
+                return super().generic_visit(node)
+
     def generic_visit(self, node: ast.AST):
-        if self._inside_body and isinstance(node, ast.stmt):
+        if isinstance(node, ast.stmt):
             body = self.track_lineno(node.lineno)
             match super().generic_visit(node):
                 case ast.stmt() as s:
                     body.append(s)
                 case list() as ss:
                     body += ss
-
             return body
 
         return super().generic_visit(node)
