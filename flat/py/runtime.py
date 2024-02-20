@@ -1,6 +1,6 @@
 import sys
 import traceback as tb
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 from flat.py import RefinementType, LangType
 
@@ -79,3 +79,18 @@ def assert_post(cond: Callable, args: list[str, Any], return_value: Any):
 
         # Stack: frame of this fun, frame of the target fun, ...
         _print_stacktrace(1)
+
+
+def fuzz_test(target: Callable, n: int, generators: list[Iterable[Any]]) -> None:
+    for i in range(n):
+        inputs = []
+        for g in generators:
+            inputs.append(next(g))
+
+        print(f'Fuzz test: {target.__name__} with {inputs}')
+        target(*inputs)
+
+
+def isla_generator(typ: LangType) -> Iterable[str]:
+    while True:
+        yield typ.obj.produce()

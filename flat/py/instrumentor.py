@@ -1,6 +1,7 @@
 import ast
 from typing import Optional
 
+import flat.py
 from flat.py.runtime import *
 
 TypeAnnot = ast.expr
@@ -58,6 +59,7 @@ class Instrumentor(ast.NodeTransformer):
         self._last_lineno = 0
         self._next_id = 0
         self._case_guards: list[ast.expr] = []
+        self._functions: dict[str, FunContext] = {}
 
     def __call__(self, source: str, code: str) -> str:
         self._env = {}
@@ -135,6 +137,7 @@ class Instrumentor(ast.NodeTransformer):
                     body += ss
 
         # update body and return
+        self._functions[node.name] = ctx
         self._ctx_stack.pop()
         if node.name == 'main' and len(node.args.args) == 0:
             name_eq_main = ast.Compare(load('__name__'), [ast.Eq()], [const('__main__')], type_ignores=[])
@@ -218,10 +221,29 @@ class Instrumentor(ast.NodeTransformer):
         body += [ast.Return(load('__return__'))]
         return body
 
-    def visit_Call(self, node: ast.Call):
+    def visit_Call(self, node: ast.Call) -> ast.Call:
         match node:
             case ast.Call(ast.Name('isinstance'), [obj, typ]) if self.needs_check(typ):
                 return apply_flat(has_type, obj, typ)
+            case ast.Call(ast.Name('fuzz'), _) if self._env['fuzz'] == flat.py.fuzz:
+                match eval(ast.unparse(node), {}, self._env):
+                    case flat.py.FuzzConfig(target, times, using_generators):
+                        if target in self._functions:
+                            ctx = self._functions[target]
+                        else:
+                            raise NameError(f'Undefined function: {target}')
+
+                        generators = []
+                        for x in ctx.param_names:
+                            if x in using_generators:  # use the specified, should use ast
+                                raise NotImplementedError
+                            elif x in ctx.type_annots:  # try to synthesize one from type
+                                generators.append(apply_flat(isla_generator, ctx.type_annots[x]))
+                            else:  # no idea
+                                raise TypeError(f'missing generator for param {x}')
+                        return apply_flat(fuzz_test, load(target), times, ast.List(generators))
+                    case _:
+                        raise TypeError
             case _:
                 return super().generic_visit(node)
 

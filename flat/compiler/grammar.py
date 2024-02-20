@@ -181,3 +181,4 @@ class LangObject:
             self._solver_volume *= 2
             self._isla_solver = ISLaSolver(self.isla_solver.grammar,
                                            max_number_free_instantiations=self._solver_volume)
+            return self.produce()

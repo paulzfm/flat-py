@@ -1,4 +1,4 @@
-from flat.py import lang, requires, ensures, seq, select_all
+from flat.py import lang, requires, ensures, seq, select_all, fuzz
 
 Options = lang('Options', """
 start: option (ws option)*;
@@ -27,4 +27,6 @@ def main():
     debug_mode("--debug")
     debug_mode("-k  4  --debug")
     assert get_bound("--debug -k 5 -k 7") == 7
-    get_bound("--debug -k 5 -k -1")
+    # get_bound("--debug -k 5 -k -1")
+
+    fuzz('debug_mode')

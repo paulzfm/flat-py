@@ -1,6 +1,6 @@
 import sys
 from dataclasses import dataclass
-from typing import Any, Callable, Optional, Tuple
+from typing import Any, Callable, Optional, Tuple, Iterator
 
 from frozenlist import FrozenList
 
@@ -108,3 +108,18 @@ def ensures(condition: Any):
         return decorated
 
     return decorate
+
+
+@dataclass
+class FuzzConfig:
+    target: str
+    times: int
+    using_generators: dict[str, Iterator[Any]]
+
+
+def fuzz(target: str, times: int = 10,
+         using_generators: Optional[dict[str, Iterator[Any]]] = None) -> FuzzConfig:
+    if using_generators is None:
+        using_generators = {}
+
+    return FuzzConfig(target, times, using_generators)
