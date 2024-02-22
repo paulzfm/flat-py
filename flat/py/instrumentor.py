@@ -1,18 +1,31 @@
-import ast
-from typing import Optional
+from dataclasses import dataclass
 
-import flat.py
+from flat.py import parse_expr, fuzz
+from flat.py.rewrite import cnf, to_isla, ISLaType, free_vars, subst
 from flat.py.runtime import *
+from flat.py.utils import classify
 
 TypeAnnot = ast.expr
 
 
+@dataclass(frozen=True)
+class FunSig:
+    """Only interesting types are specified."""
+    name: str
+    params: list[Tuple[str, Optional[TypeNorm], Optional[ast.expr]]]
+    returns: Optional[Tuple[TypeNorm, ast.expr]]
+    preconditions: list[ast.expr]  # bind params
+    postconditions: list[ast.expr]  # bind params and '_' for return value
+
+    @property
+    def param_names(self) -> list[str]:
+        return [x for x, _, _ in self.params]
+
+
 class FunContext:
-    def __init__(self):
-        self.param_names: list[str] = []
-        self.returns: Optional[TypeAnnot] = None
-        self.postconditions: list[ast.Lambda] = []
-        self.type_annots: dict[str, TypeAnnot] = {}
+    def __init__(self, fun: FunSig, annots: dict[str, ast.expr]):
+        self.fun = fun
+        self.annots = annots
 
 
 def load(name: str) -> ast.Name:
@@ -23,7 +36,17 @@ def const(value: int | str | None) -> ast.Constant:
     return ast.Constant(value)
 
 
-def assign(var: str, value: ast.expr | int) -> ast.Assign:
+def conjunction(conjuncts: list[ast.expr]) -> ast.expr:
+    match conjuncts:
+        case []:
+            return ast.Constant(True)
+        case [cond]:
+            return cond
+        case _:
+            return ast.BoolOp(ast.And(), conjuncts)
+
+
+def assign(var: str, value: ast.expr | int) -> ast.stmt:
     if isinstance(value, int):
         value = ast.Constant(value)
 
@@ -45,6 +68,10 @@ def apply(fun: str | ast.expr, *args: int | str | ast.expr) -> ast.Call:
     return ast.Call(fun, exprs, keywords=[])
 
 
+def lambda_expr(args: list[str], body: ast.expr) -> ast.Lambda:
+    return ast.Lambda(ast.arguments([], [ast.arg(x) for x in args], None, [], [], None, []), body)
+
+
 def apply_flat(fun: Callable, *args: int | str | ast.expr) -> ast.Call:
     return apply(ast.Attribute(load('__flat__'), fun.__name__, ctx=ast.Load()), *args)
 
@@ -54,21 +81,22 @@ def call_flat(fun: Callable, *args: int | str | ast.expr) -> ast.Expr:
 
 
 class Instrumentor(ast.NodeTransformer):
-    def __init__(self):
+    def __init__(self) -> None:
         # self._inside_body = False
         self._last_lineno = 0
         self._next_id = 0
         self._case_guards: list[ast.expr] = []
-        self._functions: dict[str, FunContext] = {}
+        self._functions: dict[str, FunSig] = {}
 
     def __call__(self, source: str, code: str) -> str:
-        self._env = {}
+        self._env: dict[str, Any] = {}
         exec(code, {}, self._env)
 
         tree = ast.parse(code)
-        self._ctx_stack: list[FunContext] = []
         self._last_lineno = 0
+        self._stack: list[FunContext] = []
         self.visit(tree)
+
         import_runtime = ast.parse('from flat.py import runtime as __flat__').body[0]
         set_source = ast.parse(f'__source__ = "{source}"').body[0]
         tree.body.insert(0, import_runtime)
@@ -85,60 +113,84 @@ class Instrumentor(ast.NodeTransformer):
 
         return body
 
-    def needs_check(self, type_annot: TypeAnnot) -> bool:
-        match eval(ast.unparse(type_annot), {}, self._env):
-            case LangType() | RefinementType():
-                return True
+    def expand(self, annot: ast.expr) -> Optional[TypeNorm]:
+        match eval(ast.unparse(annot), {}, self._env):
+            case LangObject() as obj:
+                return TypeNorm(BaseType.Lang, None, obj)
+            case TypeNorm() as norm:
+                return norm
             case _:
-                return False
+                return None
 
     def fresh_name(self) -> str:
         self._next_id += 1
         return f'_{self._next_id}'
 
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.stmt:
+    def visit_FunctionDef(self, node: ast.FunctionDef):
         # self._inside_body = True
         body = self.track_lineno(node.lineno)
-        ctx = FunContext()
+        annots = {}
 
         # check arg types
-        k = 0
+        params: list[Tuple[str, Optional[TypeNorm], Optional[ast.expr]]] = []
         for arg in node.args.args:
-            k += 1
-            name = arg.arg
-            ctx.param_names += [name]
-            if arg.annotation and self.needs_check(arg.annotation):
-                ctx.type_annots[name] = arg.annotation
-                body += [call_flat(assert_arg_type, load(name), k, node.name, arg.annotation)]
+            x = arg.arg
+            if arg.annotation:
+                norm = self.expand(arg.annotation)
+                if norm:
+                    annots[x] = arg.annotation
+                    body += [call_flat(assert_arg_type, load(x), len(params), node.name, arg.annotation)]
+            else:
+                norm = None
+            params.append((x, norm, arg.annotation))
 
-        # check pre and remember post
-        arg_names = [x for x in ctx.param_names]
-        processed = []
+        # check return type
+        if node.returns:
+            match self.expand(node.returns):
+                case None:
+                    returns = None
+                case norm:
+                    returns = norm, node.returns
+        else:
+            returns = None
+
+        # check specifications
+        preconditions: list[ast.expr] = []
+        postconditions: list[ast.expr] = []
+        processed: list[ast.expr] = []
+        arg_names = [x for x, _, _ in params]
         for decorator in node.decorator_list:
             match decorator:
-                case ast.Call(ast.Name('requires'), [cond]):
-                    body += self.track_lineno(cond.lineno)
-                    body += [call_flat(assert_pre, cond,
+                case ast.Call(ast.Name('requires'), [ast.Constant(str() as literal)]):
+                    pre = parse_expr(literal)
+                    preconditions.append(pre)
+                    body += self.track_lineno(decorator.lineno)
+                    body += [call_flat(assert_pre, pre,
                                        ast.List([ast.Tuple([const(x), load(x)]) for x in arg_names]), node.name)]
                     processed.append(decorator)  # to remove it
-                case ast.Call(ast.Name('ensures'), [predicate]):
-                    ctx.postconditions += [predicate]
+                case ast.Call(ast.Name('ensures'), [ast.Constant(str() as literal)]):
+                    post = parse_expr(literal)
+                    post.lineno = decorator.lineno
+                    postconditions.append(post)
                     processed.append(decorator)  # to remove it
         for x in processed:
             node.decorator_list.remove(x)
 
+        # signature done
+        sig = FunSig(node.name, params, returns, preconditions, postconditions)
+        self._functions[node.name] = sig
+
         # transform body
-        self._ctx_stack.append(ctx)
+        self._stack.append(FunContext(sig, annots))
         for stmt in node.body:
             match self.visit(stmt):
                 case ast.stmt() as s:
                     body.append(s)
                 case list() as ss:
                     body += ss
+        self._stack.pop()
 
         # update body and return
-        self._functions[node.name] = ctx
-        self._ctx_stack.pop()
         if node.name == 'main' and len(node.args.args) == 0:
             name_eq_main = ast.Compare(load('__name__'), [ast.Eq()], [const('__main__')], type_ignores=[])
             return ast.If(name_eq_main, body, orelse=[])
@@ -149,101 +201,93 @@ class Instrumentor(ast.NodeTransformer):
 
     def visit_Assign(self, node: ast.Assign) -> list[ast.stmt]:
         node.value = self.visit(node.value)
-        if len(self._ctx_stack) == 0:
+        if len(self._stack) == 0:
             return [node]
 
-        ctx = self._ctx_stack[-1]
+        ctx = self._stack[-1]
         body = self.track_lineno(node.lineno)
         body += [node]
         for target in node.targets:
             for var in vars_in_target(target):
-                if var in ctx.type_annots:
-                    body += [call_flat(assert_type, node.value, ctx.type_annots[var])]
+                if var in ctx.annots:
+                    body += [call_flat(assert_type, node.value, ctx.annots[var])]
 
         return body
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> list[ast.stmt]:
         if node.value:
             node.value = self.visit(node.value)
-        if len(self._ctx_stack) == 0:
+        if len(self._stack) == 0:
             return [node]
 
-        ctx = self._ctx_stack[-1]
+        ctx = self._stack[-1]
         body = self.track_lineno(node.lineno)
         body += [node]
         match node.target:
             case ast.Name(var):
-                if self.needs_check(node.annotation):
-                    ctx.type_annots[var] = node.annotation
-                    body += [call_flat(assert_type, node.value, ctx.type_annots[var])]
+                if self.expand(node.annotation) is not None:
+                    ctx.annots[var] = node.annotation
+                    body += [call_flat(assert_type, node.value, ctx.annots[var])]
             case _:
                 raise TypeError
 
         return body
 
-    def visit_AugAssign(self, node: ast.AugAssign) -> list[ast.stmt]:
+    def visit_AugAssign(self, node: ast.AugAssign):
         node.value = self.visit(node.value)
-        if len(self._ctx_stack) == 0:
+        if len(self._stack) == 0:
             return [node]
 
-        ctx = self._ctx_stack[-1]
+        ctx = self._stack[-1]
         body = self.track_lineno(node.lineno)
         body += [node]
         match node.target:
             case ast.Name(var):
-                if var in ctx.type_annots:
-                    body += [call_flat(assert_type, node.value, ctx.type_annots[var])]
+                if var in ctx.annots:
+                    body += [call_flat(assert_type, node.value, ctx.annots[var])]
 
         return body
 
-    def visit_Return(self, node: ast.Return) -> list[ast.stmt]:
+    def visit_Return(self, node: ast.Return):
         if node.value:
             node.value = self.visit(node.value)
         else:
             node.value = const(None)
 
-        ctx = self._ctx_stack[-1]
+        ctx = self._stack[-1]
         body = self.track_lineno(node.lineno)
-        if ctx.returns is None and len(ctx.postconditions) == 0:  # no check, just return
+        if ctx.fun.returns is None and len(ctx.fun.postconditions) == 0:  # no check, just return
             return body + [node]
 
         body += [assign('__return__', node.value)]
-        if ctx.returns:
-            body += [call_flat(assert_type, load('__return__'), ctx.returns)]
+        if ctx.fun.returns:
+            body += [call_flat(assert_type, load('__return__'), ctx.fun.returns[1])]
 
-        arg_names = [x for x in ctx.param_names]
-        for cond in ctx.postconditions:
+        arg_names = [x for x in ctx.fun.param_names]
+        for cond in ctx.fun.postconditions:  # note: return value is '_' in cond
             body += self.track_lineno(cond.lineno)
-            body += [call_flat(assert_post, cond,
+            body += [call_flat(assert_post, subst(cond, {'_': load('__return__')}),
                                ast.List([ast.Tuple([const(x), load(x)]) for x in arg_names]),
                                load('__return__'))]
         body += self.track_lineno(node.lineno)
         body += [ast.Return(load('__return__'))]
         return body
 
-    def visit_Call(self, node: ast.Call) -> ast.Call:
+    def visit_Call(self, node: ast.Call):
         match node:
-            case ast.Call(ast.Name('isinstance'), [obj, typ]) if self.needs_check(typ):
+            case ast.Call(ast.Name('isinstance'), [obj, typ]) if self.expand(typ) is not None:
                 return apply_flat(has_type, obj, typ)
-            case ast.Call(ast.Name('fuzz'), _) if self._env['fuzz'] == flat.py.fuzz:
-                match eval(ast.unparse(node), {}, self._env):
-                    case flat.py.FuzzConfig(target, times, using_generators):
-                        if target in self._functions:
-                            ctx = self._functions[target]
-                        else:
-                            raise NameError(f'Undefined function: {target}')
-
-                        generators = []
-                        for x in ctx.param_names:
-                            if x in using_generators:  # use the specified, should use ast
-                                raise NotImplementedError
-                            elif x in ctx.type_annots:  # try to synthesize one from type
-                                generators.append(apply_flat(isla_generator, ctx.type_annots[x]))
-                            else:  # no idea
-                                raise TypeError(f'missing generator for param {x}')
-                        return apply_flat(fuzz_test, load(target), times, ast.List(generators))
-                    case _:
-                        raise TypeError
+            case ast.Call(ast.Name('fuzz'), [ast.Name(target), times, *args]) if self._env['fuzz'] == fuzz:
+                if target in self._functions:
+                    fun = self._functions[target]
+                else:
+                    raise NameError(f'Undefined function: {target}')
+                match args:
+                    case []:
+                        using: dict[str, ast.expr] = {}
+                    case [ast.Dict(keys, values)]:
+                        raise NotImplementedError
+                return apply_flat(fuzz_test, load(target), times, synth_producer(fun, using))
             case _:
                 return super().generic_visit(node)
 
@@ -263,7 +307,7 @@ class Instrumentor(ast.NodeTransformer):
 
     def visit_MatchAs(self, node: ast.MatchAs):
         match node:
-            case ast.MatchAs(ast.MatchClass(cls, [], [], []), x) if self.needs_check(cls):
+            case ast.MatchAs(ast.MatchClass(cls, [], [], []), x) if self.expand(cls) is not None:
                 self._case_guards.append(apply_flat(has_type, load(x), cls))
                 return ast.MatchAs(None, x)
             case _:
@@ -271,7 +315,7 @@ class Instrumentor(ast.NodeTransformer):
 
     def visit_MatchClass(self, node: ast.MatchClass):
         match node:
-            case ast.MatchClass(cls, [], [], []) if self.needs_check(cls):
+            case ast.MatchClass(cls, [], [], []) if self.expand(cls) is not None:
                 x = self.fresh_name()
                 self._case_guards.append(apply_flat(has_type, load(x), cls))
                 return ast.MatchAs(None, x)
@@ -299,3 +343,53 @@ def vars_in_target(expr: ast.expr) -> list[str]:
             return [x for e in es for x in vars_in_target(e)]
         case _:
             return []
+
+
+def synth_producer(fun: FunSig, using_producers: dict[str, ast.expr]) -> ast.expr:
+    pre_conjuncts = [c for pre in fun.preconditions for c in cnf(pre)]
+
+    producers: list[ast.expr] = []
+    for x, norm, annot in fun.params:
+        if x in using_producers:
+            producers += [using_producers[x]]
+        elif norm is not None and norm.base == BaseType.Lang:  # synthesize an isla producer
+            formulae: list[str] = []  # conjuncts that isla can solve
+            test_conditions: list[ast.expr] = []  # other conjuncts: fall back to Python
+            if norm.cond:
+                for cond in cnf(norm.cond):
+                    match to_isla(cond, '_'):
+                        case formula, ISLaType.Formula:
+                            formulae += [formula]  # type: ignore
+                        case _:
+                            test_conditions += [cond]
+
+            # pick conjuncts that could be written in the refinement position
+            # i.e., it is a predicate over the param x only
+            picked, pre_conjuncts = classify(lambda c: free_vars(c) & (set(fun.param_names) - {x}) == set(),
+                                             pre_conjuncts)
+            for cond in picked:
+                match to_isla(cond, x):
+                    case formula, ISLaType.Formula:
+                        formulae += [formula]  # type: ignore
+                    case _:
+                        test_conditions += [subst(cond, {x: load('_')})]
+
+            match formulae:
+                case []:
+                    formula = const(None)
+                case [f]:
+                    formula = const(f)
+                case _:
+                    formula = const(' and '.join(formulae))
+
+            assert annot is not None
+            producers += [
+                apply_flat(producer,
+                           apply_flat(isla_generator, annot, formula),
+                           lambda_expr(['_'], conjunction(test_conditions)))
+            ]
+        else:
+            raise TypeError
+
+    return apply_flat(product_producer, ast.List(producers),
+                      lambda_expr(fun.param_names, conjunction(pre_conjuncts)))
