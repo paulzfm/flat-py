@@ -5,8 +5,6 @@ from flat.py.rewrite import cnf, to_isla, ISLaType, free_vars, subst
 from flat.py.runtime import *
 from flat.py.utils import classify
 
-TypeAnnot = ast.expr
-
 
 @dataclass(frozen=True)
 class FunSig:
@@ -357,7 +355,7 @@ def synth_producer(fun: FunSig, using_producers: dict[str, ast.expr]) -> ast.exp
             test_conditions: list[ast.expr] = []  # other conjuncts: fall back to Python
             if norm.cond:
                 for cond in cnf(norm.cond):
-                    match to_isla(cond, '_'):
+                    match to_isla(cond, '_', {}):
                         case formula, ISLaType.Formula:
                             formulae += [formula]  # type: ignore
                         case _:
@@ -368,7 +366,7 @@ def synth_producer(fun: FunSig, using_producers: dict[str, ast.expr]) -> ast.exp
             picked, pre_conjuncts = classify(lambda c: free_vars(c) & (set(fun.param_names) - {x}) == set(),
                                              pre_conjuncts)
             for cond in picked:
-                match to_isla(cond, x):
+                match to_isla(cond, x, {}):
                     case formula, ISLaType.Formula:
                         formulae += [formula]  # type: ignore
                     case _:

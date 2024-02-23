@@ -4,13 +4,12 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable, Optional, Tuple, Generator, TypeVar
 
-from parsy import seq, string
+from parsy import seq, string, decimal_digit
 
 from flat.compiler.grammar import LangObject
 from flat.compiler.issuer import Issuer
 from flat.compiler.lang_validator import LangValidator
-from flat.compiler.parser import Parser
-from flat.compiler.parser import ident_name
+from flat.compiler.parser import ident_name, Parser
 from flat.compiler.trees import LangDef
 
 
@@ -35,7 +34,7 @@ class BaseType(Enum):
     Lang = 3
 
 
-@dataclass
+@dataclass(frozen=True)
 class TypeNorm:
     base: BaseType
     cond: Optional[ast.expr] = None
@@ -56,15 +55,6 @@ def lang(name: str, grammar_rules: str) -> TypeNorm:
         issuer.print()
         sys.exit(1)
     return TypeNorm(BaseType.Lang, None, obj)
-
-
-@dataclass
-class RefinementType:
-    base: type | LangObject
-    cond: Callable
-
-    def __str__(self):
-        return '{' + f'{self.base} | {self.cond}' + '}'
 
 
 def parse_expr(code: str) -> ast.expr:
@@ -138,53 +128,83 @@ def last(xs: list[T]) -> T:
     return xs[-1]
 
 
-@dataclass
-class XPath:
-    start: str
-    steps: list[Tuple[bool, str]]  # True for 'x.y'; False for 'x..y'
-
-    @property
-    def edges(self) -> list[Tuple[str, bool, str]]:
-        es = []
-        if self.start != 'start':
-            es.append(('start', False, self.start))
-
-        a = self.start
-        for op, b in self.steps:
-            es.append((a, op, b))
-            a = b
-        assert len(es) > 0
-        return es
+@dataclass(frozen=True)
+class XPathSelector:
+    of: str
 
 
-xpath_dot = string('..').result(False) | string('.').result(True)
-xpath_parser = seq(ident_name, seq(xpath_dot, ident_name).many()).combine(XPath)
+@dataclass(frozen=True)
+class XPathSelectDirectAt(XPathSelector):
+    k: int  # k-th, where k >= 1
+
+
+class XPathSelectAllDirect(XPathSelector):
+    pass
+
+
+class XPathSelectAllIndirect(XPathSelector):
+    pass
+
+
+XPath = list[XPathSelector]
+
+xpath_select_direct_at = string('.') >> seq(
+    ident_name, string('[') >> decimal_digit.map(int) << string(']')).combine(XPathSelectDirectAt)
+xpath_select_all_direct = string('.') >> ident_name.map(XPathSelectAllDirect)
+xpath_select_all_indirect = string('..') >> ident_name.map(XPathSelectAllIndirect)
+xpath_parser = (xpath_select_direct_at | xpath_select_all_direct | xpath_select_all_indirect).at_least(1)
 
 
 def xpath(path: str) -> XPath:
     return xpath_parser.parse(path)
 
 
-def parse_xpath(path: str) -> Tuple[bool, list[str]]:
-    if path.startswith('.'):
+#
+#
+# @dataclass
+# class XPathSymbol:
+#     name: str
+#     index: Optional[int] = None
+
+#
+# @dataclass
+# class XPath:
+#     start: XPathSymbol
+#     steps: list[Tuple[bool, XPathSymbol]]  # True for 'x.y'; False for 'x..y'
+#
+#     @property
+#     def edges(self) -> list[Tuple[XPathSymbol, bool, XPathSymbol]]:
+#         es = []
+#         if self.start.name != 'start':
+#             es.append((XPathSymbol('start'), False, self.start))
+#
+#         a = self.start
+#         for op, b in self.steps:
+#             es.append((a, op, b))
+#             a = b
+#         assert len(es) > 0
+#         return es
+
+def parse_xpath(p: str) -> Tuple[bool, list[str]]:
+    if p.startswith('.'):
         is_abs = True
-        path = path[1:].split('.')
+        path = p[1:].split('.')
     else:
         is_abs = False
-        path = path.split('.')
+        path = p.split('.')
 
     return is_abs, path
 
 
-def select(lang_type: TypeNorm, path: str, word: str) -> str:
-    is_abs, path = parse_xpath(path)
+def select(lang_type: TypeNorm, p: str, word: str) -> str:
+    is_abs, path = parse_xpath(p)
     assert lang_type.base == BaseType.Lang
     assert lang_type.lang_object is not None
     return lang_type.lang_object.select_unique(word, path, is_abs)
 
 
-def select_all(lang_type: TypeNorm, path: str, word: str) -> list[str]:
-    is_abs, path = parse_xpath(path)
+def select_all(lang_type: TypeNorm, p: str, word: str) -> list[str]:
+    is_abs, path = parse_xpath(p)
     assert lang_type.base == BaseType.Lang
     assert lang_type.lang_object is not None
     return lang_type.lang_object.select_all(word, path, is_abs)
