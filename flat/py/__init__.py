@@ -4,13 +4,12 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable, Optional, Tuple, Generator, TypeVar
 
-from parsy import seq, string, decimal_digit
-
 from flat.compiler.grammar import LangObject
 from flat.compiler.issuer import Issuer
 from flat.compiler.lang_validator import LangValidator
-from flat.compiler.parser import ident_name, Parser
+from flat.compiler.parser import Parser
 from flat.compiler.trees import LangDef
+from flat.xpath import XPath, xpath_parser
 
 
 class PyLangValidator(LangValidator):
@@ -128,33 +127,6 @@ def last(xs: list[T]) -> T:
     return xs[-1]
 
 
-@dataclass(frozen=True)
-class XPathSelector:
-    of: str
-
-
-@dataclass(frozen=True)
-class XPathSelectDirectAt(XPathSelector):
-    k: int  # k-th, where k >= 1
-
-
-class XPathSelectAllDirect(XPathSelector):
-    pass
-
-
-class XPathSelectAllIndirect(XPathSelector):
-    pass
-
-
-XPath = list[XPathSelector]
-
-xpath_select_direct_at = string('.') >> seq(
-    ident_name, string('[') >> decimal_digit.map(int) << string(']')).combine(XPathSelectDirectAt)
-xpath_select_all_direct = string('.') >> ident_name.map(XPathSelectAllDirect)
-xpath_select_all_indirect = string('..') >> ident_name.map(XPathSelectAllIndirect)
-xpath_parser = (xpath_select_direct_at | xpath_select_all_direct | xpath_select_all_indirect).at_least(1)
-
-
 def xpath(path: str) -> XPath:
     return xpath_parser.parse(path)
 
@@ -196,15 +168,13 @@ def parse_xpath(p: str) -> Tuple[bool, list[str]]:
     return is_abs, path
 
 
-def select(lang_type: TypeNorm, p: str, word: str) -> str:
-    is_abs, path = parse_xpath(p)
+def select(lang_type: TypeNorm, path: XPath, word: str) -> str:
     assert lang_type.base == BaseType.Lang
     assert lang_type.lang_object is not None
-    return lang_type.lang_object.select_unique(word, path, is_abs)
+    return lang_type.lang_object.select_unique(word, path)
 
 
-def select_all(lang_type: TypeNorm, p: str, word: str) -> list[str]:
-    is_abs, path = parse_xpath(p)
+def select_all(lang_type: TypeNorm, path: XPath, word: str) -> list[str]:
     assert lang_type.base == BaseType.Lang
     assert lang_type.lang_object is not None
-    return lang_type.lang_object.select_all(word, path, is_abs)
+    return lang_type.lang_object.select_all(word, path)

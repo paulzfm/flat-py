@@ -6,6 +6,7 @@ from typing import Any, Callable, Tuple, Generator, Optional
 from isla.solver import ISLaSolver
 
 from flat.py import LangObject, TypeNorm, BaseType
+from flat.py.isla_extensions import *
 
 
 def has_type(value: Any, expected: LangObject | TypeNorm) -> bool:
@@ -104,6 +105,7 @@ def isla_generator(typ: TypeNorm, formula: Optional[str]) -> Gen:
     assert typ.lang_object is not None
     volume = 10
     solver = ISLaSolver(typ.lang_object.isla_solver.grammar, formula,
+                        structural_predicates={EBNF_DIRECT_CHILD, EBNF_KTH_CHILD},
                         max_number_free_instantiations=volume)
     while True:
         try:
@@ -111,8 +113,8 @@ def isla_generator(typ: TypeNorm, formula: Optional[str]) -> Gen:
         except StopIteration:
             volume *= 2
             solver = ISLaSolver(typ.lang_object.isla_solver.grammar, formula,
+                                structural_predicates={EBNF_DIRECT_CHILD, EBNF_KTH_CHILD},
                                 max_number_free_instantiations=volume)
-            print('[info] solver reset')
 
 
 def producer(generator: Gen, test: Callable[[Any], bool]) -> Gen:

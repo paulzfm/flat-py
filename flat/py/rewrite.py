@@ -3,7 +3,8 @@ from copy import deepcopy
 from enum import Enum
 from typing import Callable, Optional, Tuple
 
-from flat.py import xpath, XPath, XPathSelectDirectAt, XPathSelectAllDirect, XPathSelectAllIndirect
+from flat.py.isla_extensions import EBNF_DIRECT_CHILD, EBNF_KTH_CHILD
+from flat.xpath import *
 
 
 def negate(cond: ast.expr) -> ast.expr:
@@ -239,10 +240,11 @@ def to_isla(expr: ast.expr, this: str, ty_ctx: dict[str, ISLaType]) -> Optional[
                                                     [_, ast.Constant(str() as path), ast.Name(w)])] if w == this:
                     match to_isla(cond, this, ty_ctx_update(ty_ctx, x, ISLaType.String)):
                         case atom, ISLaType.Formula:
-                            formula = xpath_to_isla_formula(xpath(path), fun == 'forall', x, atom)  # type: ignore
+                            formula = xpath_to_isla_formula(xpath_parser.parse(path), fun == 'forall', x,
+                                                            atom)  # type: ignore
                             return formula, ISLaType.Formula
                 case 'select', [_, ast.Constant(str() as path), ast.Name(w)] if w == this:
-                    return xpath_to_isla_expr(xpath(path), 'start'), ISLaType.String
+                    return xpath_to_isla_expr(xpath_parser.parse(path), 'start'), ISLaType.String
 
         case ast.Call(ast.Attribute(receiver, fun, ctx=ast.Load()), args, keywords=[]):
             match fun, args:
@@ -297,11 +299,11 @@ def xpath_to_isla_formula(path: XPath, is_universal: bool, atomic_binder: str, a
     for selector, x, scope in zip(reversed(path), reversed(binders), reversed(['start'] + binders[:-1])):
         match selector:
             case XPathSelectDirectAt(symbol, pos):
-                formula = (f'({quantifier} <{symbol}> {x} in {scope}: '
-                           f'({x} = {scope}.<{symbol}>[{pos}] and {formula}))')
+                formula = (f'(exists <{symbol}> {x} in {scope}: '
+                           f'({EBNF_KTH_CHILD}({x}, {scope}, "{pos}") and {formula}))')
             case XPathSelectAllDirect(symbol):
                 formula = (f'({quantifier} <{symbol}> {x} in {scope}: '
-                           f'(direct_child({x}, {scope}) {connective} {formula}))')
+                           f'({EBNF_DIRECT_CHILD.name}({x}, {scope}) {connective} {formula}))')
             case XPathSelectAllIndirect(symbol):
                 formula = f'({quantifier} <{symbol}> {x} in {scope}: {formula})'
     return formula

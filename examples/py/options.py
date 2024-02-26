@@ -10,13 +10,13 @@ ws: " "+;
 """)
 
 
-@ensures('not _ if forall(lambda x: x == "", select_all(Options, "opt_debug", opt)) else _')
+@ensures('not _ if forall(lambda x: x == "", select_all(Options, xpath("..opt_debug"), opt)) else _')
 def debug_mode(opt: Options) -> bool:
     return '--debug' in opt
 
 
-@requires('exists(lambda x: True, select_all(Options, "bound", opt))')
-@ensures('_ == int(last(select_all(Options, "bound", opt)))')
+@requires('exists(lambda x: True, select_all(Options, xpath("..bound"), opt))')
+@ensures('_ == int(last(select_all(Options, xpath("..bound"), opt)))')
 def get_bound(opt: Options) -> int:
     digit = opt[opt.rfind('-k') + 3]
     return int(digit)

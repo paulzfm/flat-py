@@ -1,12 +1,12 @@
 from functools import reduce
 from typing import Optional, Literal
 
-from isla.derivation_tree import DerivationTree
 from isla.helpers import is_valid_grammar
 from isla.solver import ISLaSolver
 from isla.type_defs import Grammar as ISLAGrammar
 
 from flat.compiler.trees import (Clause, Token, CharSet, Symbol, Rep, Seq, Alt)
+from flat.xpath import XPath, select_by_xpath
 
 
 class Converter:
@@ -138,39 +138,16 @@ class LangObject:
     def __contains__(self, word: str) -> bool:
         return self.isla_solver.check(word)
 
-    def select_all(self, word: str, path: list[str], is_absolute: bool) -> list[str]:
-        def collect_children(of: str, within: DerivationTree, out: list[DerivationTree]) -> None:
-            for child in within.children:
-                if child.value == of:
-                    out.append(child)
-                if child.value.startswith('<-'):  # skip fresh nodes, as they do not exist in the original grammar
-                    collect_children(of, child, out)
-
+    def select_all(self, word: str, path: XPath) -> list[str]:
         try:
             root = self.isla_solver.parse(word, skip_check=True)
         except SyntaxError:
             return []
 
-        labels = [f'<{name}>' for name in path]
-        if is_absolute:  # select from the root
-            trees = [root]
-        else:  # select from all nodes labelled with the first symbol of the path
-            trees = [t for _, t in root.filter(lambda t: t.value == labels[0])]
-            labels = labels[1:]
+        return [tree.to_string() for tree in select_by_xpath(root, path)]
 
-        for label in labels:
-            if len(trees) == 0:  # no candidates
-                break
-
-            new_trees = []
-            for tree in trees:  # for each candidate, move one step further according to the label
-                collect_children(label, tree, new_trees)
-            trees = new_trees
-
-        return [tree.to_string() for tree in trees]
-
-    def select_unique(self, word: str, path: list[str], is_absolute: bool) -> str:
-        candidates = self.select_all(word, path, is_absolute)
+    def select_unique(self, word: str, path: XPath) -> str:
+        candidates = self.select_all(word, path)
         assert len(candidates) == 1, f'selected: {candidates}'
         return candidates[0]
 
