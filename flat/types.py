@@ -1,0 +1,62 @@
+import abc
+from dataclasses import dataclass
+from enum import Enum
+
+from flat.grammars import Grammar
+
+Value = int | bool | str
+
+
+class Cond:
+    @abc.abstractmethod
+    def apply(self, value: Value) -> bool:
+        raise NotImplementedError
+
+
+class Type:
+    @property
+    def is_lang_type(self) -> bool:
+        return False
+
+
+class BaseType(Type):
+    pass
+
+
+class BuiltinType(BaseType, Enum):
+    Int = 0
+    Bool = 1
+    String = 2
+
+
+@dataclass
+class LangType(BaseType):
+    grammar: Grammar
+
+    def is_lang_type(self) -> bool:
+        return True
+
+
+@dataclass
+class RefinementType(Type):
+    base: BaseType
+    cond: Cond
+
+    def is_lang_type(self) -> bool:
+        return self.base.is_lang_type
+
+
+def value_has_type(value: Value, typ: Type) -> bool:
+    match value, typ:
+        case int(), BuiltinType.Int:
+            return True
+        case bool(), BuiltinType.Bool:
+            return True
+        case str(), BuiltinType.String:
+            return True
+        case str() as word, LangType(grammar):
+            return word in grammar
+        case value, RefinementType(base, cond):
+            return value_has_type(value, base) and cond.apply(value)
+        case _:
+            return False

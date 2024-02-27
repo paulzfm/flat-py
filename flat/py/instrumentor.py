@@ -1,17 +1,19 @@
+import ast
 from dataclasses import dataclass
 
-from flat.py import parse_expr, fuzz
-from flat.py.rewrite import cnf, to_isla, ISLaType, free_vars, subst
+from flat.py import fuzz, PyCond
+from flat.py.rewrite import cnf, ISLaConvertor, free_vars, subst
 from flat.py.runtime import *
 from flat.py.utils import classify
+from flat.types import Type, RefinementType
 
 
 @dataclass(frozen=True)
 class FunSig:
     """Only interesting types are specified."""
     name: str
-    params: list[Tuple[str, Optional[TypeNorm], Optional[ast.expr]]]
-    returns: Optional[Tuple[TypeNorm, ast.expr]]
+    params: list[Tuple[str, Optional[Type], Optional[ast.expr]]]
+    returns: Optional[Tuple[Type, ast.expr]]
     preconditions: list[ast.expr]  # bind params
     postconditions: list[ast.expr]  # bind params and '_' for return value
 
@@ -78,6 +80,24 @@ def call_flat(fun: Callable, *args: int | str | ast.expr) -> ast.Expr:
     return ast.Expr(apply_flat(fun, *args))
 
 
+def parse_expr(code: str) -> ast.expr:
+    match ast.parse(code).body[0]:
+        case ast.Expr(expr):
+            return expr
+        case _:
+            raise TypeError
+
+
+def canonical_cond(condition: ast.expr, binders: list[str]) -> ast.expr:
+    match condition:
+        case ast.Constant(str() as literal):
+            return parse_expr(literal)
+        case ast.Lambda(ast.arguments([], args, None, [], [], None, []), body):
+            return subst(body, dict((arg.arg, load(x)) for arg, x in zip(args, binders)))
+        case _:
+            raise TypeError
+
+
 class Instrumentor(ast.NodeTransformer):
     def __init__(self) -> None:
         # self._inside_body = False
@@ -111,12 +131,10 @@ class Instrumentor(ast.NodeTransformer):
 
         return body
 
-    def expand(self, annot: ast.expr) -> Optional[TypeNorm]:
+    def expand(self, annot: ast.expr) -> Optional[Type]:
         match eval(ast.unparse(annot), {}, self._env):
-            case LangObject() as obj:
-                return TypeNorm(BaseType.Lang, None, obj)
-            case TypeNorm() as norm:
-                return norm
+            case Type() as t:
+                return t
             case _:
                 return None
 
@@ -130,25 +148,25 @@ class Instrumentor(ast.NodeTransformer):
         annots = {}
 
         # check arg types
-        params: list[Tuple[str, Optional[TypeNorm], Optional[ast.expr]]] = []
+        params: list[Tuple[str, Optional[Type], Optional[ast.expr]]] = []
         for arg in node.args.args:
             x = arg.arg
             if arg.annotation:
-                norm = self.expand(arg.annotation)
-                if norm:
+                typ = self.expand(arg.annotation)
+                if typ:
                     annots[x] = arg.annotation
                     body += [call_flat(assert_arg_type, load(x), len(params), node.name, arg.annotation)]
             else:
-                norm = None
-            params.append((x, norm, arg.annotation))
+                typ = None
+            params.append((x, typ, arg.annotation))
 
         # check return type
         if node.returns:
             match self.expand(node.returns):
                 case None:
                     returns = None
-                case norm:
-                    returns = norm, node.returns
+                case typ:
+                    returns = typ, node.returns
         else:
             returns = None
 
@@ -159,15 +177,15 @@ class Instrumentor(ast.NodeTransformer):
         arg_names = [x for x, _, _ in params]
         for decorator in node.decorator_list:
             match decorator:
-                case ast.Call(ast.Name('requires'), [ast.Constant(str() as literal)]):
-                    pre = parse_expr(literal)
+                case ast.Call(ast.Name('requires'), [condition]):
+                    pre = canonical_cond(condition, arg_names)
                     preconditions.append(pre)
                     body += self.track_lineno(decorator.lineno)
                     body += [call_flat(assert_pre, pre,
                                        ast.List([ast.Tuple([const(x), load(x)]) for x in arg_names]), node.name)]
                     processed.append(decorator)  # to remove it
-                case ast.Call(ast.Name('ensures'), [ast.Constant(str() as literal)]):
-                    post = parse_expr(literal)
+                case ast.Call(ast.Name('ensures'), [condition]):
+                    post = canonical_cond(condition, arg_names + ['_'])
                     post.lineno = decorator.lineno
                     postconditions.append(post)
                     processed.append(decorator)  # to remove it
@@ -285,7 +303,7 @@ class Instrumentor(ast.NodeTransformer):
                         using: dict[str, ast.expr] = {}
                     case [ast.Dict(keys, values)]:
                         raise NotImplementedError
-                return apply_flat(fuzz_test, load(target), times, synth_producer(fun, using))
+                return apply_flat(fuzz_test, load(target), times, self._producer(fun, using))
             case _:
                 return super().generic_visit(node)
 
@@ -332,6 +350,56 @@ class Instrumentor(ast.NodeTransformer):
 
         return super().generic_visit(node)
 
+    def _producer(self, fun: FunSig, using_producers: dict[str, ast.expr]) -> ast.expr:
+        pre_conjuncts = [c for pre in fun.preconditions for c in cnf(pre)]
+        convert = ISLaConvertor(self._env)
+
+        producers: list[ast.expr] = []
+        for x, typ, annot in fun.params:
+            if x in using_producers:
+                producers += [using_producers[x]]
+            elif typ and typ.is_lang_type:  # synthesize an isla producer
+                formulae: list[str] = []  # conjuncts that isla can solve
+                test_conditions: list[ast.expr] = []  # other conjuncts: fall back to Python
+                if isinstance(typ, RefinementType) and isinstance(typ.cond, PyCond):
+                    for cond in cnf(typ.cond.expr):
+                        match convert(cond, '_'):
+                            case None:
+                                test_conditions += [cond]
+                            case f:
+                                formulae += [f]  # type: ignore
+
+                # pick conjuncts that could be written in the refinement position
+                # i.e., it is a predicate over the param x only
+                picked, pre_conjuncts = classify(lambda c: free_vars(c) & (set(fun.param_names) - {x}) == set(),
+                                                 pre_conjuncts)
+                for cond in picked:
+                    match convert(cond, x):
+                        case None:
+                            test_conditions += [subst(cond, {x: load('_')})]
+                        case f:
+                            formulae += [f]  # type: ignore
+
+                match formulae:
+                    case []:
+                        formula = const(None)
+                    case [f]:
+                        formula = const(f)
+                    case _:
+                        formula = const(' and '.join(formulae))
+
+                assert annot is not None
+                producers += [
+                    apply_flat(producer,
+                               apply_flat(isla_generator, annot, formula),
+                               lambda_expr(['_'], conjunction(test_conditions)))
+                ]
+            else:
+                raise TypeError
+
+        return apply_flat(product_producer, ast.List(producers),
+                          lambda_expr(fun.param_names, conjunction(pre_conjuncts)))
+
 
 def vars_in_target(expr: ast.expr) -> list[str]:
     match expr:
@@ -341,53 +409,3 @@ def vars_in_target(expr: ast.expr) -> list[str]:
             return [x for e in es for x in vars_in_target(e)]
         case _:
             return []
-
-
-def synth_producer(fun: FunSig, using_producers: dict[str, ast.expr]) -> ast.expr:
-    pre_conjuncts = [c for pre in fun.preconditions for c in cnf(pre)]
-
-    producers: list[ast.expr] = []
-    for x, norm, annot in fun.params:
-        if x in using_producers:
-            producers += [using_producers[x]]
-        elif norm is not None and norm.base == BaseType.Lang:  # synthesize an isla producer
-            formulae: list[str] = []  # conjuncts that isla can solve
-            test_conditions: list[ast.expr] = []  # other conjuncts: fall back to Python
-            if norm.cond:
-                for cond in cnf(norm.cond):
-                    match to_isla(cond, '_', {}):
-                        case formula, ISLaType.Formula:
-                            formulae += [formula]  # type: ignore
-                        case _:
-                            test_conditions += [cond]
-
-            # pick conjuncts that could be written in the refinement position
-            # i.e., it is a predicate over the param x only
-            picked, pre_conjuncts = classify(lambda c: free_vars(c) & (set(fun.param_names) - {x}) == set(),
-                                             pre_conjuncts)
-            for cond in picked:
-                match to_isla(cond, x, {}):
-                    case formula, ISLaType.Formula:
-                        formulae += [formula]  # type: ignore
-                    case _:
-                        test_conditions += [subst(cond, {x: load('_')})]
-
-            match formulae:
-                case []:
-                    formula = const(None)
-                case [f]:
-                    formula = const(f)
-                case _:
-                    formula = const(' and '.join(formulae))
-
-            assert annot is not None
-            producers += [
-                apply_flat(producer,
-                           apply_flat(isla_generator, annot, formula),
-                           lambda_expr(['_'], conjunction(test_conditions)))
-            ]
-        else:
-            raise TypeError
-
-    return apply_flat(product_producer, ast.List(producers),
-                      lambda_expr(fun.param_names, conjunction(pre_conjuncts)))

@@ -1,3 +1,4 @@
+from flat.lib import *
 from flat.py import *
 
 Options = lang('Options', """
@@ -10,13 +11,13 @@ ws: " "+;
 """)
 
 
-@ensures('not _ if forall(lambda x: x == "", select_all(Options, xpath("..opt_debug"), opt)) else _')
+@ensures(lambda opt, b: not b if selected_all(lambda x: x == "", xpath(Options, "..opt_debug"), opt) else b)
 def debug_mode(opt: Options) -> bool:
     return '--debug' in opt
 
 
-@requires('exists(lambda x: True, select_all(Options, xpath("..bound"), opt))')
-@ensures('_ == int(last(select_all(Options, xpath("..bound"), opt)))')
+@requires(lambda opt: selected_any(lambda _: True, xpath(Options, "..bound"), opt))
+@ensures(lambda opt, k: k == int(select_kth(xpath(Options, "..bound"), opt, -1)))
 def get_bound(opt: Options) -> int:
     digit = opt[opt.rfind('-k') + 3]
     return int(digit)

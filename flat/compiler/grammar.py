@@ -6,7 +6,7 @@ from isla.solver import ISLaSolver
 from isla.type_defs import Grammar as ISLAGrammar
 
 from flat.compiler.trees import (Clause, Token, CharSet, Symbol, Rep, Seq, Alt)
-from flat.xpath import XPath, select_by_xpath
+from flat.selectors import XPath, select_by_xpath
 
 
 class Converter:

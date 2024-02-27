@@ -4,6 +4,8 @@ from isla.derivation_tree import DerivationTree
 from isla.helpers import is_nonterminal
 from parsy import string, seq, decimal_digit, regex
 
+from flat.types import LangType
+
 
 @dataclass(frozen=True)
 class XPathSelector:
@@ -23,8 +25,6 @@ class XPathSelectAllIndirect(XPathSelector):
     pass
 
 
-XPath = list[XPathSelector]
-
 ident_start = regex(r'[_a-zA-Z]')
 ident_rest = ident_start | decimal_digit | string("'")
 ident_name = seq(ident_start, ident_rest.many()).combine(lambda c, cs: ''.join([c] + cs))
@@ -34,6 +34,12 @@ xpath_select_direct_at = string('.') >> seq(
 xpath_select_all_direct = string('.') >> ident_name.map(XPathSelectAllDirect)
 xpath_select_all_indirect = string('..') >> ident_name.map(XPathSelectAllIndirect)
 xpath_parser = (xpath_select_direct_at | xpath_select_all_direct | xpath_select_all_indirect).at_least(1)
+
+
+@dataclass
+class XPath:
+    language: LangType
+    selectors: list[XPathSelector]
 
 
 def children_labelled_with(tree: DerivationTree, symbol: str) -> list[DerivationTree]:
@@ -50,7 +56,7 @@ def children_labelled_with(tree: DerivationTree, symbol: str) -> list[Derivation
 
 def select_by_xpath(tree: DerivationTree, path: XPath) -> list[DerivationTree]:
     old = [tree]
-    for selector in path:
+    for selector in path.selectors:
         new = []
         if len(old) == 0:
             return []

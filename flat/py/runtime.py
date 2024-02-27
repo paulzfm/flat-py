@@ -1,39 +1,19 @@
-import ast
 import sys
 import traceback as tb
 from typing import Any, Callable, Tuple, Generator, Optional
 
 from isla.solver import ISLaSolver
 
-from flat.py import LangObject, TypeNorm, BaseType
 from flat.py.isla_extensions import *
+from flat.types import Type, value_has_type, LangType
 
 
-def has_type(value: Any, expected: LangObject | TypeNorm) -> bool:
-    match expected:
-        case LangObject() as language:
-            return isinstance(value, str) and value in language
-        case TypeNorm(base, cond, lang_object):
-            match base:
-                case BaseType.Int:
-                    if not isinstance(value, int):
-                        return False
-                case BaseType.Bool:
-                    if not isinstance(value, bool):
-                        return False
-                case _:
-                    if not isinstance(value, str):
-                        return False
-                    if base == BaseType.Lang:
-                        assert lang_object is not None
-                        if value not in lang_object:
-                            return False
-            if cond:
-                return eval(ast.unparse(cond), globals(), {'_': value})
-            else:
-                return True
+def has_type(obj: Any, expected: Type) -> bool:
+    match obj:
+        case (int() | bool() | str()) as v:
+            return value_has_type(v, expected)
         case _:
-            raise RuntimeError(f"illegal type: {expected}")
+            assert False
 
 
 def _print_stacktrace(depth: int):
@@ -55,7 +35,7 @@ def _print_stacktrace(depth: int):
     sys.exit(1)
 
 
-def assert_type(value: Any, expected_type: LangObject | TypeNorm):
+def assert_type(value: Any, expected_type: Type):
     if not has_type(value, expected_type):
         print(f'Type mismatch:', file=sys.stderr)
         print(f'  expected type: {expected_type}', file=sys.stderr)
@@ -65,7 +45,7 @@ def assert_type(value: Any, expected_type: LangObject | TypeNorm):
         _print_stacktrace(1)
 
 
-def assert_arg_type(value: Any, k: int, of_method: str, expected_type: LangObject | TypeNorm):
+def assert_arg_type(value: Any, k: int, of_method: str, expected_type: Type):
     if not has_type(value, expected_type):
         print(f'Type mismatch for argument {k} of method {of_method}:', file=sys.stderr)
         print(f'  expected type: {expected_type}', file=sys.stderr)
@@ -101,10 +81,10 @@ def assert_post(cond: bool, args: list[Tuple[str, Any]], return_value: Any):
 Gen = Generator[Any, None, None]
 
 
-def isla_generator(typ: TypeNorm, formula: Optional[str]) -> Gen:
-    assert typ.lang_object is not None
+def isla_generator(typ: LangType, formula: Optional[str]) -> Gen:
+    assert typ is not None
     volume = 10
-    solver = ISLaSolver(typ.lang_object.isla_solver.grammar, formula,
+    solver = ISLaSolver(typ.grammar.isla_solver.grammar, formula,
                         structural_predicates={EBNF_DIRECT_CHILD, EBNF_KTH_CHILD},
                         max_number_free_instantiations=volume)
     while True:
@@ -112,7 +92,7 @@ def isla_generator(typ: TypeNorm, formula: Optional[str]) -> Gen:
             yield solver.solve().to_string()
         except StopIteration:
             volume *= 2
-            solver = ISLaSolver(typ.lang_object.isla_solver.grammar, formula,
+            solver = ISLaSolver(typ.grammar.isla_solver.grammar, formula,
                                 structural_predicates={EBNF_DIRECT_CHILD, EBNF_KTH_CHILD},
                                 max_number_free_instantiations=volume)
 

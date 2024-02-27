@@ -2,7 +2,7 @@ from isla.derivation_tree import DerivationTree
 from isla.language import StructuralPredicate
 from isla.type_defs import Path
 
-from flat.xpath import children_labelled_with
+from flat.selectors import children_labelled_with
 
 
 def ebnf_direct_child(tree: DerivationTree, path: Path, parent_path: Path) -> bool:
