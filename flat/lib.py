@@ -1,6 +1,7 @@
 from typing import TypeVar, Callable
 
-from flat.selectors import XPath, select_by_xpath
+from flat.selectors import XPath, select_by_xpath, xpath_parser
+from flat.types import LangType
 
 # builtin functions for writing spec
 T = TypeVar('T')
@@ -20,6 +21,10 @@ def first(xs: list[T]) -> T:
 
 def last(xs: list[T]) -> T:
     return xs[-1]
+
+
+def xpath(language: LangType, selector: str) -> XPath:
+    return XPath(language, xpath_parser.parse(selector))
 
 
 def select_all(path: XPath, word: str) -> list[str]:

@@ -15,3 +15,6 @@ class Pos:
                 return self.start < other_start
             case _:
                 raise TypeError
+
+
+NoPos = Pos((-1, -1), (-1, -1))

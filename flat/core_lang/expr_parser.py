@@ -1,7 +1,7 @@
+import functools
 from dataclasses import dataclass
 
 from parsy import Parser, seq
-import functools
 
 
 class OpGroup:

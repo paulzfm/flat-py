@@ -1,16 +1,18 @@
 import abc
 from functools import reduce
+from typing import Optional
 
 from isla.derivation_tree import DerivationTree
 from isla.helpers import is_valid_grammar
 from isla.solver import ISLaSolver
 from isla.type_defs import Grammar as ISLaGrammar
 
-from flat.grammar_ast import *
+from flat.ast import (Rule, Clause, Token, Symbol, CharSet, Rep, Seq, Alt, RepExactly, RepInRange, Lit)
 
 
 class Grammar:
-    def __init__(self, clauses: dict[str, Clause], isla_grammar: ISLaGrammar):
+    def __init__(self, name: str, clauses: dict[str, Clause], isla_grammar: ISLaGrammar):
+        self.name = name
         self.clauses = clauses
         self.isla_solver = ISLaSolver(isla_grammar)
 
@@ -83,7 +85,7 @@ class GrammarBuilder:
 
         def check(clause: Clause) -> None:
             match clause:
-                case CharSet(Literal(lower), lit) as cs:
+                case CharSet(Lit(lower), lit) as cs:
                     if cs.end <= cs.begin:
                         raise NameError
                         # self.issuer.error(InvalidClause(f'this charactor (code={cs.end}) must > '
@@ -111,11 +113,11 @@ class GrammarBuilder:
                                     raise NameError
                                     # self.issuer.error(InvalidClause('1 is redundant here', lit.pos,
                                     #                                 hint='drop the repetition in this clause'))
-                        case RepInRange(_, Literal() as lit) if lit.value == 0:
+                        case RepInRange(_, Lit() as lit) if lit.value == 0:
                             raise NameError
                             # self.issuer.error(InvalidClause('0 is not allowed here', lit.pos,
                             #                                 hint='use the empty clause "" instead'))
-                        case RepInRange(Literal(lower), Literal() as lit) if lit.value <= lower:
+                        case RepInRange(Lit(lower), Lit() as lit) if lit.value <= lower:
                             raise NameError
                             # self.issuer.error(InvalidClause(f'this value must > {lower}', lit.pos))
                 case Seq(clauses):
@@ -132,7 +134,7 @@ class GrammarBuilder:
             raise NameError
             # self.issuer.error(UnusedRule(grammar[rule_name].ident.pos))
 
-    def __call__(self, rules: list[Rule]) -> Grammar:
+    def __call__(self, name: str, rules: list[Rule]) -> Grammar:
         self.validate(rules)
         clauses = dict([(rule.name, rule.body) for rule in rules])
 
@@ -154,7 +156,7 @@ class GrammarBuilder:
         assert is_valid_grammar(self._grammar)
         # print('converted grammar:')
         # print(self._grammar)
-        return Grammar(clauses, self._grammar)
+        return Grammar(name, clauses, self._grammar)
 
     def _fresh_name(self) -> str:
         fresh_name = f'<-{str(self._next_counter)}>'
@@ -163,7 +165,7 @@ class GrammarBuilder:
 
     def _convert(self, clause: Clause) -> str:
         match clause:
-            case Token(text):
+            case Token(Lit(text)):
                 assert '<' not in text and '>' not in text
                 return text
             case CharSet() as cs:

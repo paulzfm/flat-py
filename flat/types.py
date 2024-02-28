@@ -46,6 +46,16 @@ class RefinementType(Type):
         return self.base.is_lang_type
 
 
+def get_base_type(typ: Type) -> BuiltinType:
+    match typ:
+        case BuiltinType() as b:
+            return b
+        case LangType():
+            return BuiltinType.String
+        case RefinementType(b, _):
+            return get_base_type(b)
+
+
 def value_has_type(value: Value, typ: Type) -> bool:
     match value, typ:
         case int(), BuiltinType.Int:

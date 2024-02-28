@@ -1,9 +1,9 @@
 import ast
 from typing import Any, Callable, Optional, Generator
 
-from flat.grammar_ast import parse_rules
+import flat.parser
 from flat.grammars import GrammarBuilder, Grammar
-from flat.selectors import XPath, xpath_parser
+from flat.parser import parse_using
 from flat.types import LangType, RefinementType, Cond, BuiltinType, Value
 
 
@@ -23,7 +23,7 @@ class LangBuilder(GrammarBuilder):
 
 def lang(name: str, rules: str) -> LangType:
     builder = LangBuilder()
-    grammar = builder(parse_rules(rules))
+    grammar = builder(name, parse_using(flat.parser.rules, rules, '<file>', (1, 1)))
     return LangType(grammar)
 
 
@@ -67,10 +67,6 @@ def refine(base_type: type | LangType | RefinementType, refinement: str) -> Refi
     # from inspect import signature
     # sig = signature(refinement)
     # assert len(sig.parameters.keys()) == 1
-
-
-def xpath(language: LangType, selector: str) -> XPath:
-    return XPath(language, xpath_parser.parse(selector))
 
 
 def requires(condition: Any):
