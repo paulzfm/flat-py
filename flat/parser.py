@@ -92,7 +92,7 @@ string_lit = with_pos(string).combine(Lit)
 ident = with_pos(identifier).combine(Ident)
 
 terminal = string_lit.map(Token)
-nonterminal = identifier.map(Symbol)
+nonterminal = ident.map(Symbol)
 char = with_pos(normal_char).combine(Lit)
 char_set = bracket(seq(char, token('-') >> char)).combine(CharSet)
 clause = forward_declaration()

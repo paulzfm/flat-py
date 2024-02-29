@@ -89,6 +89,16 @@ def ensures(condition: Any):
     return decorate
 
 
+def returns(value: Any):
+    def decorate(func):
+        def decorated(*args, **kwargs):
+            func(*args, **kwargs)  # identity
+
+        return decorated
+
+    return decorate
+
+
 def fuzz(target: Callable, times: int,
-         using_producers: Optional[dict[str, Generator[Any, None, None]]] = None) -> None:
+         using: Optional[dict[str, Generator[Any, None, None]]] = None) -> None:
     raise NotImplementedError

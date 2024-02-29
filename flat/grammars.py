@@ -7,7 +7,7 @@ from isla.helpers import is_valid_grammar
 from isla.solver import ISLaSolver
 from isla.type_defs import Grammar as ISLaGrammar
 
-from flat.ast import (Rule, Clause, Token, Symbol, CharSet, Rep, Seq, Alt, RepExactly, RepInRange, Lit)
+from flat.ast import (Rule, Clause, Token, Symbol, CharSet, Rep, Seq, Alt, RepExactly, RepInRange, Lit, Ident)
 
 
 class Grammar:
@@ -90,11 +90,11 @@ class GrammarBuilder:
                         raise NameError
                         # self.issuer.error(InvalidClause(f'this charactor (code={cs.end}) must > '
                         #                                 f'"{lower}" (code={cs.begin})', lit.pos))
-                case Symbol('start'):
+                case Symbol(Ident('start')):
                     raise NameError
                     # self.issuer.error(InvalidClause('using start rule is not allowed here', clause.pos,
                     #                                 hint='introduce a new rule and let start rule point to it'))
-                case Symbol(name):
+                case Symbol(Ident(name)):
                     if name in grammar:
                         unused.discard(name)
                     elif self.lookup_lang(name) is None:
@@ -143,58 +143,58 @@ class GrammarBuilder:
 
         for symbol in clauses:
             label = f'<{symbol}>'
-            self._grammar[label] = []
-
-        for symbol in clauses:
-            label = f'<{symbol}>'
-            match clauses[symbol]:
-                case Alt(cs):
-                    self._grammar[label] += [self._convert(c) for c in cs]
-                case c:
-                    self._grammar[label].append(self._convert(c))
+            self._grammar[label] = self._convert(clauses[symbol])
+            if label == '<start>' and len(self._grammar['<start>']) > 1:
+                # NOTE: ISLa assumes the start rule to be a singleton
+                start = self._fresh_nonterminal()
+                self._grammar[start] = self._grammar['<start>']
+                self._grammar['<start>'] = [start]
 
         assert is_valid_grammar(self._grammar)
-        # print('converted grammar:')
-        # print(self._grammar)
         return Grammar(name, clauses, self._grammar)
 
-    def _fresh_name(self) -> str:
+    def _fresh_nonterminal(self) -> str:
         fresh_name = f'<-{str(self._next_counter)}>'
         self._next_counter += 1
         return fresh_name
 
-    def _convert(self, clause: Clause) -> str:
+    def _convert(self, clause: Clause) -> list[str]:
         match clause:
-            case Token(Lit(text)):
+            case Token(Lit(str() as text, _)):
                 assert '<' not in text and '>' not in text
-                return text
+                return [text]
+            case Symbol(Ident(name, _)):
+                return [f'<{name}>']
             case CharSet() as cs:
-                nonterminal = self._fresh_name()
-                self._grammar[nonterminal] = [chr(code) for code in cs.get_range]
-                return nonterminal
-            case Symbol(name):
-                return f'<{name}>'
+                return [chr(code) for code in cs.get_range]
             case Rep(clause, rep_range):
-                element = self._convert(clause)
-                nonterminal = self._fresh_name()
+                match self._convert(clause):
+                    case [c]:
+                        elem = c  # inline
+                    case cs:
+                        elem = self._fresh_nonterminal()
+                        self._grammar[elem] = cs
 
                 k1 = rep_range.lower
                 k2 = rep_range.upper
                 if k2:  # finite
-                    self._grammar[nonterminal] = [element * k for k in range(k1, k2 + 1)]
+                    return [elem * k for k in range(k1, k2 + 1)]
                 else:  # infinite
-                    required = element * k1
-                    if required == '':  # save a fresh symbol;
-                        # look like ISLA may have problems in parsing if introducing a redundant symbol?
-                        self._grammar[nonterminal] = ['', element + nonterminal]
-                    else:
-                        optionals = self._fresh_name()
-                        self._grammar[optionals] = ['', element + optionals]
-                        self._grammar[nonterminal] = [required + optionals]
-                return nonterminal
+                    elems = self._fresh_nonterminal()
+                    self._grammar[elems] = [elem * k1, elem + elems]
+                    return [elems]
             case Seq(clauses):
-                return ''.join([self._convert(clause) for clause in clauses])
+                concat = ''
+                for clause in clauses:
+                    match self._convert(clause):
+                        case [c]:
+                            concat += c
+                        case cs:
+                            group = self._fresh_nonterminal()
+                            self._grammar[group] = cs
+                            concat += group
+                return [concat]
             case Alt(clauses):
-                nonterminal = self._fresh_name()
-                self._grammar[nonterminal] = [self._convert(clause) for clause in clauses]
-                return nonterminal
+                return [c for clause in clauses for c in self._convert(clause)]
+            case other:
+                raise NotImplementedError(other.__class__.__name__)

@@ -1,4 +1,3 @@
-import ast
 from dataclasses import dataclass
 
 from flat.py import fuzz, PyCond
@@ -13,6 +12,7 @@ class FunSig:
     """Only interesting types are specified."""
     name: str
     params: list[Tuple[str, Optional[Type], Optional[ast.expr]]]
+    defaults: dict[str, ast.expr]
     returns: Optional[Tuple[Type, ast.expr]]
     preconditions: list[ast.expr]  # bind params
     postconditions: list[ast.expr]  # bind params and '_' for return value
@@ -160,6 +160,11 @@ class Instrumentor(ast.NodeTransformer):
                 typ = None
             params.append((x, typ, arg.annotation))
 
+        # record default value
+        defaults: dict[str, Optional[ast.expr]] = {}
+        for (x, _, _), default in zip(reversed(params), reversed(node.args.defaults)):
+            defaults[x] = default
+
         # check return type
         if node.returns:
             match self.expand(node.returns):
@@ -189,11 +194,17 @@ class Instrumentor(ast.NodeTransformer):
                     post.lineno = decorator.lineno
                     postconditions.append(post)
                     processed.append(decorator)  # to remove it
+                case ast.Call(ast.Name('returns'), [value]):
+                    value = canonical_cond(value, arg_names)
+                    post = ast.Compare(load('_'), [ast.Eq()], [value])
+                    post.lineno = decorator.lineno
+                    postconditions.append(post)
+                    processed.append(decorator)  # to remove it
         for x in processed:
             node.decorator_list.remove(x)
 
         # signature done
-        sig = FunSig(node.name, params, returns, preconditions, postconditions)
+        sig = FunSig(node.name, params, defaults, returns, preconditions, postconditions)
         self._functions[node.name] = sig
 
         # transform body
@@ -298,11 +309,20 @@ class Instrumentor(ast.NodeTransformer):
                     fun = self._functions[target]
                 else:
                     raise NameError(f'Undefined function: {target}')
+
+                using: dict[str, ast.expr] = {}
                 match args:
                     case []:
-                        using: dict[str, ast.expr] = {}
+                        pass
                     case [ast.Dict(keys, values)]:
-                        raise NotImplementedError
+                        for key, value in zip(keys, values):
+                            match key:
+                                case ast.Constant(str() as x):
+                                    using[x] = value
+                                case _:
+                                    raise TypeError
+                    case _:
+                        raise TypeError
                 return apply_flat(fuzz_test, load(target), times, self._producer(fun, using))
             case _:
                 return super().generic_visit(node)
@@ -394,8 +414,10 @@ class Instrumentor(ast.NodeTransformer):
                                apply_flat(isla_generator, annot, formula),
                                lambda_expr(['_'], conjunction(test_conditions)))
                 ]
+            elif x in fun.defaults:  # use default value
+                producers += [apply_flat(constant_generator, fun.defaults[x])]
             else:
-                raise TypeError
+                raise TypeError(f'must specify producer for param {x}, specified are {using_producers}')
 
         return apply_flat(product_producer, ast.List(producers),
                           lambda_expr(fun.param_names, conjunction(pre_conjuncts)))

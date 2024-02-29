@@ -1,3 +1,4 @@
+import ast
 import sys
 import traceback as tb
 from typing import Any, Callable, Tuple, Generator, Optional
@@ -60,7 +61,7 @@ def assert_pre(cond: bool, args: list[Tuple[str, Any]], of_method: str):
         print(f'Precondition of method {of_method} violated:', file=sys.stderr)
         print('  inputs:', file=sys.stderr)
         for x, v in args:
-            print(f'    {x} = {v}', file=sys.stderr)
+            print(f'    {x} = {show_value(v)}', file=sys.stderr)
 
         # Stack: frame of this fun, frame of the callee, frame of the caller, ...
         _print_stacktrace(1)
@@ -71,14 +72,27 @@ def assert_post(cond: bool, args: list[Tuple[str, Any]], return_value: Any):
         print(f'Postcondition violated:', file=sys.stderr)
         print('  inputs:', file=sys.stderr)
         for x, v in args:
-            print(f'    {x} = {v}', file=sys.stderr)
-        print(f'  output: {return_value}', file=sys.stderr)
+            print(f'    {x} = {show_value(v)}', file=sys.stderr)
+        print(f'  output: {show_value(return_value)}', file=sys.stderr)
 
         # Stack: frame of this fun, frame of the target fun, ...
         _print_stacktrace(1)
 
 
+def show_value(value: Any):
+    match value:
+        case str() as s:
+            return ast.unparse(ast.Constant(s))
+        case _:
+            return str(value)
+
+
 Gen = Generator[Any, None, None]
+
+
+def constant_generator(value: Any) -> Gen:
+    while True:
+        yield value
 
 
 def isla_generator(typ: LangType, formula: Optional[str]) -> Gen:

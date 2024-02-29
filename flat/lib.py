@@ -3,6 +3,11 @@ from typing import TypeVar, Callable
 from flat.selectors import XPath, select_by_xpath, xpath_parser
 from flat.types import LangType
 
+
+def implies(p: bool, q: bool) -> bool:
+    return q if p else True
+
+
 # builtin functions for writing spec
 T = TypeVar('T')
 

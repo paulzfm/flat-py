@@ -6,12 +6,12 @@ pos = refine(int, '_ > 0')
 neg = refine(int, '_ < 0')
 
 
-@ensures('_ == (n >= 0)')
+@ensures(lambda n, out: out == (n >= 0))
 def is_nat(n: int) -> bool:
     return n == 0 or isinstance(n, pos)
 
 
-@ensures('_ == (1 if n > 0 else 0 if n == 0 else -1)')
+@ensures(lambda n, s: s == (1 if n > 0 else 0 if n == 0 else -1))
 def sign(n: int) -> Literal[1, 0, -1]:
     match n:
         case pos():
