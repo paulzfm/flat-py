@@ -72,7 +72,7 @@ def refine(base_type: type | LangType | RefinementType, refinement: str) -> Refi
 def requires(condition: Any):
     def decorate(func):
         def decorated(*args, **kwargs):
-            func(*args, **kwargs)  # identity
+            return func(*args, **kwargs)  # identity
 
         return decorated
 
@@ -82,7 +82,7 @@ def requires(condition: Any):
 def ensures(condition: Any):
     def decorate(func):
         def decorated(*args, **kwargs):
-            func(*args, **kwargs)  # identity
+            return func(*args, **kwargs)  # identity
 
         return decorated
 
@@ -92,7 +92,7 @@ def ensures(condition: Any):
 def returns(value: Any):
     def decorate(func):
         def decorated(*args, **kwargs):
-            func(*args, **kwargs)  # identity
+            return func(*args, **kwargs)  # identity
 
         return decorated
 
