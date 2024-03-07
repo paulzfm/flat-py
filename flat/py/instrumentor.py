@@ -409,6 +409,8 @@ class Instrumentor(ast.NodeTransformer):
                         formula = const(' and '.join(formulae))
 
                 assert annot is not None
+                if isinstance(typ, RefinementType):
+                    annot = ast.Attribute(annot, 'base', ctx=ast.Load())
                 producers += [
                     apply_flat(producer,
                                apply_flat(isla_generator, annot, formula),

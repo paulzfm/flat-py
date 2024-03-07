@@ -3,12 +3,18 @@ from typing import Union
 
 from string_utils.manipulation import __RomanNumbers
 
-from flat.py import requires, lang, fuzz
+from flat.py import requires, lang, fuzz, refine
+from flat.py.runtime import isla_generator
 
-RomanNumber = lang('RomanNumber', """
-start: digit+;
-digit: "I" | "V" | "X" | "L" | "C" | "D" | "M";
+RomanSyntax = lang('RomanSyntax', """
+start: thousand? hundred? tens? units?;
+thousand: "M"{1,3};
+hundred: "C"{1,3} | "CD" | "D" "C"{0,3} | "CM";
+tens: "X"{1,3} | "XL" | "L" "X"{0,3} | "XC";
+units: "I"{1,3} | "IV" | "V" "I"{0,3} | "IX";
 """)
+
+RomanNumber = refine(RomanSyntax, '_ != ""')
 
 
 @requires(lambda num: 1 <= int(num) <= 3999)
@@ -59,5 +65,16 @@ def number_gen():
 
 
 def main():
-    # fuzz(roman_encode, 100, {'input_number': number_gen()})
+    fuzz(roman_encode, 100, {'input_number': number_gen()})
     fuzz(roman_decode, 100)
+
+    g = number_gen()
+    for _ in range(100):
+        n = next(g)
+        assert roman_decode(roman_encode(n)) == n
+
+    g = isla_generator(RomanSyntax)
+    for _ in range(100):
+        r = next(g)
+        if r != '':
+            assert roman_encode(roman_decode(r)) == r

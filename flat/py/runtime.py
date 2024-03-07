@@ -95,7 +95,7 @@ def constant_generator(value: Any) -> Gen:
         yield value
 
 
-def isla_generator(typ: LangType, formula: Optional[str]) -> Gen:
+def isla_generator(typ: LangType, formula: Optional[str] = None) -> Gen:
     assert typ is not None
     volume = 10
     solver = ISLaSolver(typ.grammar.isla_solver.grammar, formula,
