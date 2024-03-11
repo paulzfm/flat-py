@@ -4,7 +4,7 @@ from typing import Optional
 
 from isla.derivation_tree import DerivationTree
 from isla.helpers import is_valid_grammar
-from isla.solver import ISLaSolver
+from isla.solver import ISLaSolver, SemanticError
 from isla.type_defs import Grammar as ISLaGrammar
 
 from flat.ast import (Rule, Clause, Token, Symbol, CharSet, Rep, Seq, Alt, RepExactly, RepInRange, Lit, Ident)
@@ -17,10 +17,14 @@ class Grammar:
         self.isla_solver = ISLaSolver(isla_grammar)
 
     def __contains__(self, word: str) -> bool:
-        return self.isla_solver.check(word)
+        try:
+            self.isla_solver.parse(word, skip_check=True, silent=True)
+            return True
+        except (SyntaxError, SemanticError):
+            return False
 
     def parse(self, word: str) -> DerivationTree:
-        return self.isla_solver.parse(word, skip_check=True)
+        return self.isla_solver.parse(word, skip_check=True, silent=True)
 
     def count(self, target: str, clause: Clause | str, direct: bool):
         """Count how many times a `target` nonterminal can appear in a parse tree derived from `clause`.

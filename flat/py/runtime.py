@@ -1,10 +1,10 @@
 import ast
-import sys
-import traceback as tb
-from typing import Any, Callable, Tuple, Generator, Optional
+import inspect
+from typing import Any, Callable, Generator, Optional
 
 from isla.solver import ISLaSolver
 
+from flat.py.errors import *
 from flat.py.isla_extensions import *
 from flat.types import Type, value_has_type, LangType
 
@@ -17,66 +17,25 @@ def has_type(obj: Any, expected: Type) -> bool:
             assert False
 
 
-def _print_stacktrace(depth: int):
-    summaries = []
-    for frame, _ in tb.walk_stack(sys._getframe(depth).f_back):
-        if '__line__' in frame.f_locals:
-            source = frame.f_globals['__source__']
-            line = frame.f_locals['__line__']
-        else:
-            source = frame.f_code.co_filename
-            line = frame.f_lineno
-
-        summaries.append(tb.FrameSummary(source, line, frame.f_code.co_name))
-
-    stack_summary = tb.StackSummary.from_list(summaries)
-    print('Traceback (most recent call last):', file=sys.stderr)
-    for line in stack_summary.format():
-        print(line, end='', file=sys.stderr)
-    sys.exit(1)
-
-
-def assert_type(value: Any, expected_type: Type):
+def assert_type(value: Any, value_loc: Loc, expected_type: Type):
     if not has_type(value, expected_type):
-        print(f'Type mismatch:', file=sys.stderr)
-        print(f'  expected type: {expected_type}', file=sys.stderr)
-        print(f'  actual value:  {value}', file=sys.stderr)
-
-        # Stack: frame of this fun, frame of the target fun, ...
-        _print_stacktrace(1)
+        raise TypeMismatch(str(expected_type), show_value(value), value_loc)
 
 
 def assert_arg_type(value: Any, k: int, of_method: str, expected_type: Type):
     if not has_type(value, expected_type):
-        print(f'Type mismatch for argument {k} of method {of_method}:', file=sys.stderr)
-        print(f'  expected type: {expected_type}', file=sys.stderr)
-        print(f'  actual value:  {value}', file=sys.stderr)
-
-        # Stack: frame of this fun, frame of the callee, frame of the caller, ...
-        _print_stacktrace(2)
+        raise ArgTypeMismatch(str(expected_type), show_value(value), k, of_method)
 
 
 def assert_pre(cond: bool, args: list[Tuple[str, Any]], of_method: str):
     if not cond:
-        print(f'Precondition of method {of_method} violated:', file=sys.stderr)
-        print('  inputs:', file=sys.stderr)
-        for x, v in args:
-            print(f'    {x} = {show_value(v)}', file=sys.stderr)
-
-        # Stack: frame of this fun, frame of the callee, frame of the caller, ...
-        _print_stacktrace(1)
+        raise PreconditionViolated(of_method, [(name, show_value(v)) for name, v in args])
 
 
-def assert_post(cond: bool, args: list[Tuple[str, Any]], return_value: Any):
+def assert_post(cond: bool, args: list[Tuple[str, Any]], return_value: Any, return_value_loc: Loc, of_method: str):
     if not cond:
-        print(f'Postcondition violated:', file=sys.stderr)
-        print('  inputs:', file=sys.stderr)
-        for x, v in args:
-            print(f'    {x} = {show_value(v)}', file=sys.stderr)
-        print(f'  output: {show_value(return_value)}', file=sys.stderr)
-
-        # Stack: frame of this fun, frame of the target fun, ...
-        _print_stacktrace(1)
+        raise PostconditionViolated(of_method, [(name, show_value(v)) for name, v in args],
+                                    show_value(return_value), return_value_loc)
 
 
 def show_value(value: Any):
@@ -125,8 +84,26 @@ def product_producer(producers: list[Gen], test: Callable[[Any], bool]) -> Gen:
             yield values
 
 
-def fuzz_test(target: Callable, times: int, args_producer: Gen) -> None:
+def fuzz(target: Callable, times: int, args_producer: Gen) -> None:
+    # copy __source__, __line__ from the last frame
+    frame = inspect.currentframe()
+    back_frame = frame.f_back
+    if '__line__' in back_frame.f_locals:
+        frame.f_locals['__line__'] = back_frame.f_locals['__line__']
+        frame.f_globals['__source__'] = back_frame.f_globals['__source__']
+
     for _ in range(times):
         inputs = next(args_producer)
-        print(f'Fuzz test: {target.__name__} with {inputs}')
-        target(*inputs)
+        try:
+            target(*inputs)
+        except Error as err:
+            print(f'-(Fuzz)-> {target.__name__}{tuple(inputs)}')
+            err.print()
+            return
+
+
+def run_main(main: Callable) -> None:
+    try:
+        main()
+    except Error as err:
+        err.print()

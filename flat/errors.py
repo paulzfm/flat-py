@@ -19,14 +19,14 @@ class Error(RuntimeError):
         return []
 
     def __str__(self) -> str:
-        return self.summary + '\n'.join(self.details)
+        return self.summary + '\n' + '\n'.join(['  ' + msg for msg in self.details])
 
     def print(self) -> None:
-        print(str(self), file=sys.stderr)
         stack_summary = StackSummary.from_list(self.get_stack_frame())
-        print('Traceback (most recent call last):', file=sys.stderr)
+        print('Traceback (most recent call last):', file=sys.stderr, flush=True)
         for line in stack_summary.format():
-            print(line, end='', file=sys.stderr)
+            print(line, end='', file=sys.stderr, flush=True)
+        print(str(self), file=sys.stderr, flush=True)
 
 
 class ParsingError(Error):

@@ -1,6 +1,4 @@
-from dataclasses import dataclass
-
-from flat.py import fuzz, PyCond
+from flat.py import fuzz as fuzz_annot, PyCond
 from flat.py.rewrite import cnf, ISLaConvertor, free_vars, subst
 from flat.py.runtime import *
 from flat.py.utils import classify
@@ -98,6 +96,10 @@ def canonical_cond(condition: ast.expr, binders: list[str]) -> ast.expr:
             raise TypeError
 
 
+def get_loc(node: ast.AST) -> ast.expr:
+    return apply_flat(Loc, node.lineno, node.col_offset, node.end_lineno, node.end_col_offset)
+
+
 class Instrumentor(ast.NodeTransformer):
     def __init__(self) -> None:
         # self._inside_body = False
@@ -119,6 +121,7 @@ class Instrumentor(ast.NodeTransformer):
         set_source = ast.parse(f'__source__ = "{source}"').body[0]
         tree.body.insert(0, import_runtime)
         tree.body.insert(1, set_source)
+        tree.body.append(call_flat(run_main, load('main')))
         ast.fix_missing_locations(tree)
         return ast.unparse(tree)
 
@@ -217,14 +220,8 @@ class Instrumentor(ast.NodeTransformer):
                     body += ss
         self._stack.pop()
 
-        # update body and return
-        if node.name == 'main' and len(node.args.args) == 0:
-            name_eq_main = ast.Compare(load('__name__'), [ast.Eq()], [const('__main__')], type_ignores=[])
-            return ast.If(name_eq_main, body, orelse=[])
-        else:
-            node.body = body
-            # self._inside_body = False
-            return node
+        node.body = body
+        return node
 
     def visit_Assign(self, node: ast.Assign) -> list[ast.stmt]:
         node.value = self.visit(node.value)
@@ -237,7 +234,7 @@ class Instrumentor(ast.NodeTransformer):
         for target in node.targets:
             for var in vars_in_target(target):
                 if var in ctx.annots:
-                    body += [call_flat(assert_type, node.value, ctx.annots[var])]
+                    body += [call_flat(assert_type, node.value, get_loc(node.value), ctx.annots[var])]
 
         return body
 
@@ -254,7 +251,7 @@ class Instrumentor(ast.NodeTransformer):
             case ast.Name(var):
                 if self.expand(node.annotation) is not None:
                     ctx.annots[var] = node.annotation
-                    body += [call_flat(assert_type, node.value, ctx.annots[var])]
+                    body += [call_flat(assert_type, node.value, get_loc(node.value), ctx.annots[var])]
             case _:
                 raise TypeError
 
@@ -271,7 +268,7 @@ class Instrumentor(ast.NodeTransformer):
         match node.target:
             case ast.Name(var):
                 if var in ctx.annots:
-                    body += [call_flat(assert_type, node.value, ctx.annots[var])]
+                    body += [call_flat(assert_type, node.value, get_loc(node.value), ctx.annots[var])]
 
         return body
 
@@ -288,14 +285,14 @@ class Instrumentor(ast.NodeTransformer):
 
         body += [assign('__return__', node.value)]
         if ctx.fun.returns:
-            body += [call_flat(assert_type, load('__return__'), ctx.fun.returns[1])]
+            body += [call_flat(assert_type, load('__return__'), get_loc(node.value), ctx.fun.returns[1])]
 
         arg_names = [x for x in ctx.fun.param_names]
         for cond in ctx.fun.postconditions:  # note: return value is '_' in cond
             body += self.track_lineno(cond.lineno)
             body += [call_flat(assert_post, subst(cond, {'_': load('__return__')}),
                                ast.List([ast.Tuple([const(x), load(x)]) for x in arg_names]),
-                               load('__return__'))]
+                               load('__return__'), get_loc(node.value), const(ctx.fun.name))]
         body += self.track_lineno(node.lineno)
         body += [ast.Return(load('__return__'))]
         return body
@@ -304,7 +301,7 @@ class Instrumentor(ast.NodeTransformer):
         match node:
             case ast.Call(ast.Name('isinstance'), [obj, typ]) if self.expand(typ) is not None:
                 return apply_flat(has_type, obj, typ)
-            case ast.Call(ast.Name('fuzz'), [ast.Name(target), times, *args]) if self._env['fuzz'] == fuzz:
+            case ast.Call(ast.Name('fuzz'), [ast.Name(target), times, *args]) if self._env['fuzz'] == fuzz_annot:
                 if target in self._functions:
                     fun = self._functions[target]
                 else:
@@ -323,7 +320,7 @@ class Instrumentor(ast.NodeTransformer):
                                     raise TypeError
                     case _:
                         raise TypeError
-                return apply_flat(fuzz_test, load(target), times, self._producer(fun, using))
+                return apply_flat(fuzz, load(target), times, self._producer(fun, using))
             case _:
                 return super().generic_visit(node)
 

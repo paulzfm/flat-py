@@ -36,6 +36,9 @@ class LangType(BaseType):
     def is_lang_type(self) -> bool:
         return True
 
+    def __str__(self) -> str:
+        return self.grammar.name
+
 
 @dataclass
 class RefinementType(Type):
@@ -44,6 +47,9 @@ class RefinementType(Type):
 
     def is_lang_type(self) -> bool:
         return self.base.is_lang_type
+
+    def __str__(self) -> str:
+        return '{' + f'{self.base} | {self.cond}' + '}'
 
 
 def get_base_type(typ: Type) -> BuiltinType:

@@ -75,6 +75,13 @@ number: [0-9]+;
 """)
 
 
+# shell command
+# file name apis
+# enums as string
+
+# compare with no-flat
+# 3-5 case studies
+
 def diff_main_from_options(options: Options):
     sys.argv = options.split(' ')
     diff_main()
