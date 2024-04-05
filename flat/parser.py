@@ -3,7 +3,7 @@ from traceback import FrameSummary
 from typing import Any, Tuple
 
 from parsy import (Parser, string as text, regex, whitespace, decimal_digit, seq, forward_declaration, any_char, alt,
-                   ParseError, line_info_at)
+                   ParseError, line_info_at, char_from)
 
 from flat.ast import *
 from flat.errors import ParsingError
@@ -48,6 +48,8 @@ def make_string(*parts: str | list[str]) -> str:
 
 
 integer = skip_whitespaces >> decimal_digit.at_least(1).map(lambda digits: int(make_string(digits)))
+hex_integer = skip_whitespaces >> (decimal_digit | char_from('AaBbCcDdEeFf')).at_least(1).map(
+    lambda digits: int(make_string(digits), base=16))
 boolean = skip_whitespaces >> (text('true').result(True) | text('false').result(False))
 
 
@@ -67,7 +69,7 @@ quoted_string = seq(quote, (normal_char | escape_char).many(), quote).combine(ma
 string = skip_whitespaces >> quoted_string.map(unquote)
 
 id_start = regex(r'[_a-zA-Z]')
-id_rest = id_start | decimal_digit | text("'")
+id_rest = id_start | decimal_digit | text("'") | text("-")
 identifier = skip_whitespaces >> seq(id_start, id_rest.many()).combine(make_string)
 
 
@@ -95,8 +97,19 @@ terminal = string_lit.map(Token)
 nonterminal = ident.map(Symbol)
 char = with_pos(normal_char).combine(Lit)
 char_set = bracket(seq(char, token('-') >> char)).combine(CharSet)
+
+# RFC extensions
+dec_char = int_lit.map(lambda lit: Lit(chr(lit.value), lit.pos))
+hex_char = with_pos(hex_integer).combine(Lit).map(lambda lit: Lit(chr(lit.value), lit.pos))
+rfc_char_set = alt(
+    token('%d') >> seq(dec_char, (token('-') >> dec_char).optional()).combine(
+        lambda n1, n2: (n1, n2 if n2 else n1)),
+    token('%x') >> seq(hex_char, (token('-') >> hex_char).optional()).combine(
+        lambda n1, n2: (n1, n2 if n2 else n1)),
+).combine(CharSet)
+
 clause = forward_declaration()
-simple_clause = terminal | nonterminal | char_set | paren(clause)
+simple_clause = terminal | nonterminal | char_set | rfc_char_set | paren(clause)
 
 rep_range = alt(
     token('*').result(RepStar()),
@@ -122,5 +135,7 @@ def parse_using(parser: Parser, inp: str, filename: str, start_loc: Tuple[int, i
         row, offset = line_info_at(err.stream, err.index)
         real_lineno = lineno + row
         real_colno = colno + offset if row == 0 else offset + 1
-        frame = FrameSummary(filename, real_lineno, '<file>', colno=real_colno, end_colno=real_colno + 2)
+        frame = FrameSummary(filename, real_lineno, '<file>',
+                             lookup_line=False, line=err.stream.splitlines()[row],
+                             end_lineno=real_lineno, colno=real_colno, end_colno=real_colno + 1)
         raise ParsingError(err.expected, frame)

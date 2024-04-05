@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 from flat.core_lang.ast import Expr
-from flat.types import Cond, Value
+from flat.typing import Cond, Value
 
 
 @dataclass

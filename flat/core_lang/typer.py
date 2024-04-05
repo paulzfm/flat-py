@@ -5,7 +5,7 @@ from flat.core_lang.cond import CoreCond
 from flat.core_lang.types import *
 from flat.errors import Undefined
 from flat.grammars import GrammarBuilder
-from flat.types import *
+from flat.typing import *
 
 
 class Typer(GrammarBuilder):

@@ -1,7 +1,7 @@
 from typing import TypeVar, Callable
 
 from flat.selectors import XPath, select_by_xpath, xpath_parser
-from flat.types import LangType
+from flat.typing import LangType
 
 
 def implies(p: bool, q: bool) -> bool:

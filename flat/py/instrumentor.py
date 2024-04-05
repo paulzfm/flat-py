@@ -2,7 +2,7 @@ from flat.py import fuzz as fuzz_annot, PyCond
 from flat.py.rewrite import cnf, ISLaConvertor, free_vars, subst
 from flat.py.runtime import *
 from flat.py.utils import classify
-from flat.types import Type, RefinementType
+from flat.typing import Type, RefinementType
 
 
 @dataclass(frozen=True)

@@ -6,7 +6,7 @@ from isla.solver import ISLaSolver
 
 from flat.py.errors import *
 from flat.py.isla_extensions import *
-from flat.types import Type, value_has_type, LangType
+from flat.typing import Type, value_has_type, LangType
 
 
 def has_type(obj: Any, expected: Type) -> bool:

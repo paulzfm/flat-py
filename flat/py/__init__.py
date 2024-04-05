@@ -4,7 +4,7 @@ from typing import Any, Callable, Optional, Generator
 import flat.parser
 from flat.grammars import GrammarBuilder, Grammar
 from flat.parser import parse_using
-from flat.types import LangType, RefinementType, Cond, BuiltinType, Value
+from flat.typing import LangType, RefinementType, Cond, BuiltinType, Value
 
 
 class LangBuilder(GrammarBuilder):
@@ -48,6 +48,9 @@ class PyCond(Cond):
                 return b
             case _:
                 raise TypeError
+
+    def __str__(self) -> str:
+        return ast.unparse(self.expr)
 
 
 def refine(base_type: type | LangType | RefinementType, refinement: str) -> RefinementType:

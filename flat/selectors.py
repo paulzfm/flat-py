@@ -4,7 +4,7 @@ from isla.derivation_tree import DerivationTree
 from isla.helpers import is_nonterminal
 from parsy import string, seq, decimal_digit, regex
 
-from flat.types import LangType
+from flat.typing import LangType
 
 
 @dataclass(frozen=True)

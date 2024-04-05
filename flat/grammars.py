@@ -90,8 +90,8 @@ class GrammarBuilder:
         def check(clause: Clause) -> None:
             match clause:
                 case CharSet(Lit(lower), lit) as cs:
-                    if cs.end <= cs.begin:
-                        raise NameError
+                    if cs.end < cs.begin:
+                        raise NameError(f"{cs.end} < {cs.begin} in clause {cs}")
                         # self.issuer.error(InvalidClause(f'this charactor (code={cs.end}) must > '
                         #                                 f'"{lower}" (code={cs.begin})', lit.pos))
                 case Symbol(Ident('start')):
@@ -135,7 +135,11 @@ class GrammarBuilder:
             check(rule.body)
 
         for rule_name in unused:
-            raise NameError
+            for rule in rules:
+                if rule.name == rule_name:
+                    rules.remove(rule)
+                    break
+            # raise NameError(f"Rule {rule_name} unused")
             # self.issuer.error(UnusedRule(grammar[rule_name].ident.pos))
 
     def __call__(self, name: str, rules: list[Rule]) -> Grammar:

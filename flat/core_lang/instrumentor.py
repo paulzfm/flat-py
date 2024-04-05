@@ -6,7 +6,7 @@ from flat.core_lang.errors import *
 from flat.core_lang.typer import Typer
 from flat.errors import Redefined, Undefined
 from flat.pos import NoPos
-from flat.types import *
+from flat.typing import *
 
 
 @dataclass(frozen=True)
