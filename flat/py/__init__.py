@@ -1,24 +1,29 @@
 import ast
-from typing import Any, Callable, Optional, Generator
+from typing import Any, Callable, Generator
 
 import flat.parser
-from flat.grammars import GrammarBuilder, Grammar
-from flat.parser import parse_using
-from flat.typing import LangType, RefinementType, Cond, BuiltinType, Value
+from flat.types import *
+from flat.typing import LangType, RefinementType, Cond, BuiltinType, Value, ListType
 
 
 class LangBuilder(GrammarBuilder):
     def lookup_lang(self, name: str) -> Optional[Grammar]:
-        try:
-            value = eval(name)
-        except NameError:
-            return None
-
-        match value:
-            case LangType(g):
-                return g
+        match name:
+            case 'RFC_Email':
+                return RFC_Email.grammar
+            case 'RFC_URL':
+                return RFC_URL.grammar
             case _:
-                return None
+                try:
+                    value = eval(name)
+                except NameError:
+                    return None
+
+                match value:
+                    case LangType(g):
+                        return g
+                    case _:
+                        return None
 
 
 def lang(name: str, rules: str) -> LangType:
@@ -70,6 +75,10 @@ def refine(base_type: type | LangType | RefinementType, refinement: str) -> Refi
     # from inspect import signature
     # sig = signature(refinement)
     # assert len(sig.parameters.keys()) == 1
+
+
+def list_of(elem_type: LangType | RefinementType) -> ListType:
+    return ListType(elem_type)
 
 
 def requires(condition: Any):

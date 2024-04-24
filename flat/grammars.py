@@ -72,11 +72,11 @@ class GrammarBuilder:
     def lookup_lang(self, name: str) -> Optional[Grammar]:
         raise NotImplementedError
 
-    def validate(self, rules: list[Rule]):
+    def validate(self, rules: list[Rule]) -> dict[str, Rule]:
         grammar: dict[str, Rule] = {}
         for rule in rules:
             if rule.name in grammar:
-                raise NameError
+                raise NameError(f'redefined rule: {rule}')
                 # self.issuer.error(RedefinedName(grammar[rule.name].pos, rule.ident.pos))
             else:
                 grammar[rule.name] = rule
@@ -84,8 +84,6 @@ class GrammarBuilder:
         if 'start' not in grammar:
             raise NameError
             # self.issuer.error(MissingStartRule(ident.pos))
-
-        unused: set[str] = set(grammar.keys()) - {'start'}
 
         def check(clause: Clause) -> None:
             match clause:
@@ -100,9 +98,9 @@ class GrammarBuilder:
                     #                                 hint='introduce a new rule and let start rule point to it'))
                 case Symbol(Ident(name)):
                     if name in grammar:
-                        unused.discard(name)
+                        pass
                     elif self.lookup_lang(name) is None:
-                        raise NameError
+                        raise NameError(name)
                         # self.issuer.error(UndefinedName(clause.pos))
                 case Rep(clause, rep_range):
                     check(clause)
@@ -133,18 +131,48 @@ class GrammarBuilder:
 
         for rule in rules:
             check(rule.body)
+        return grammar
 
-        for rule_name in unused:
-            for rule in rules:
-                if rule.name == rule_name:
-                    rules.remove(rule)
-                    break
-            # raise NameError(f"Rule {rule_name} unused")
-            # self.issuer.error(UnusedRule(grammar[rule_name].ident.pos))
+    def reduce(self, grammar: dict[str, Rule]) -> dict[str, Clause]:
+        clauses: dict[str, Clause] = {}
+
+        def collect_used(clause: Clause, buf: set[str]) -> None:
+            match clause:
+                case Symbol(Ident(name)):
+                    if name in grammar:
+                        buf.add(name)
+                    elif name not in clauses:
+                        g = self.lookup_lang(name)
+                        clauses[name] = g.clauses['start']
+                        for k in g.clauses:
+                            if k != 'start':
+                                assert k not in clauses
+                                clauses[k] = g.clauses[k]
+                case Rep(c, _):
+                    collect_used(c, buf)
+                case Seq(cs):
+                    for c in cs:
+                        collect_used(c, buf)
+                case Alt(cs):
+                    for c in cs:
+                        collect_used(c, buf)
+
+        queue = ['start']
+        while len(queue) > 0:
+            n = queue.pop(0)
+            if n not in clauses:
+                clauses[n] = grammar[n].body
+                used = set()
+                collect_used(grammar[n].body, used)
+                for x in used:
+                    if x not in clauses:
+                        queue.append(x)
+
+        return clauses
 
     def __call__(self, name: str, rules: list[Rule]) -> Grammar:
-        self.validate(rules)
-        clauses = dict([(rule.name, rule.body) for rule in rules])
+        grammar = self.validate(rules)
+        clauses = self.reduce(grammar)
 
         self._grammar = {}
         self._next_counter = 0
@@ -169,7 +197,19 @@ class GrammarBuilder:
     def _convert(self, clause: Clause) -> list[str]:
         match clause:
             case Token(Lit(str() as text, _)):
-                assert '<' not in text and '>' not in text
+                if '<' in text or '>' in text:
+                    quoted = ''
+                    for ch in text:
+                        match ch:
+                            case '<':
+                                quoted += '<-l>'
+                                self._grammar['<-l>'] = ['<']
+                            case '>':
+                                quoted += '<-r>'
+                                self._grammar['<-r>'] = ['>']
+                            case _:
+                                quoted += ch
+                    return [quoted]
                 return [text]
             case Symbol(Ident(name, _)):
                 return [f'<{name}>']

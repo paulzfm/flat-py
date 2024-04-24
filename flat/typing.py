@@ -52,6 +52,17 @@ class RefinementType(Type):
         return '{' + f'{self.base} | {self.cond}' + '}'
 
 
+@dataclass
+class ListType(Type):
+    elem_type: Type
+
+    def is_lang_type(self) -> bool:
+        return self.elem_type.is_lang_type
+
+    def __str__(self) -> str:
+        return f'[{self.elem_type}]'
+
+
 def get_base_type(typ: Type) -> BuiltinType:
     match typ:
         case BuiltinType() as b:

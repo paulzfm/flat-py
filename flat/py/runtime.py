@@ -6,13 +6,19 @@ from isla.solver import ISLaSolver
 
 from flat.py.errors import *
 from flat.py.isla_extensions import *
-from flat.typing import Type, value_has_type, LangType
+from flat.typing import Type, value_has_type, LangType, ListType
 
 
 def has_type(obj: Any, expected: Type) -> bool:
     match obj:
         case (int() | bool() | str()) as v:
             return value_has_type(v, expected)
+        case list() as xs:
+            match expected:
+                case ListType(t):
+                    return all(has_type(x, t) for x in xs)
+                case _:
+                    return False
         case _:
             assert False
 
@@ -97,9 +103,11 @@ def fuzz(target: Callable, times: int, args_producer: Gen) -> None:
         try:
             target(*inputs)
         except Error as err:
-            print(f'-(Fuzz)-> {target.__name__}{tuple(inputs)}')
+            print(f'[Error] {target.__name__}{tuple(inputs)}')
             err.print()
             return
+        else:
+            print(f'[OK] {target.__name__}{tuple(inputs)}')
 
 
 def run_main(main: Callable) -> None:
