@@ -1,4 +1,5 @@
 import ast
+import sys
 from typing import Any, Callable, Generator
 
 import flat.parser
@@ -48,7 +49,8 @@ class PyCond(Cond):
         raise TypeError
 
     def apply(self, value: Value) -> bool:
-        match eval(ast.unparse(self.expr), globals(), {'_': value}):
+        env = sys.modules['_.source'].__dict__
+        match eval(ast.unparse(self.expr), env, {'_': value}):
             case bool() as b:
                 return b
             case _:

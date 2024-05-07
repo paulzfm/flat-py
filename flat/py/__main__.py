@@ -1,6 +1,7 @@
 import os
 import sys
 
+from flat.errors import Error
 from flat.py.instrumentor import Instrumentor
 
 
@@ -28,4 +29,8 @@ def print_usage():
 
 if len(sys.argv) != 2:
     print_usage()
-instrument(sys.argv[1], 'examples/out')
+
+try:
+    instrument(sys.argv[1], 'examples/out')
+except Error as err:
+    err.print()

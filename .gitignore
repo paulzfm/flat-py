@@ -161,3 +161,4 @@ cython_debug/
 
 examples/out
 examples/notes
+examples/static

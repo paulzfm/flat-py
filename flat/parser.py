@@ -134,8 +134,8 @@ def parse_using(parser: Parser, inp: str, filename: str, start_loc: Tuple[int, i
         lineno, colno = start_loc
         row, offset = line_info_at(err.stream, err.index)
         real_lineno = lineno + row
-        real_colno = colno + offset if row == 0 else offset + 1
+        real_colno = (colno + offset) if row == 0 else offset
         frame = FrameSummary(filename, real_lineno, '<file>',
                              lookup_line=False, line=err.stream.splitlines()[row],
-                             end_lineno=real_lineno, colno=real_colno, end_colno=real_colno + 1)
+                             end_lineno=real_lineno, colno=real_colno - 1, end_colno=real_colno)
         raise ParsingError(err.expected, frame)

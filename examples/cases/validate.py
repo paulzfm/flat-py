@@ -16,21 +16,22 @@
 
 import re
 
-from flat.lib import select, xpath
-from flat.py import lang, refine
+from flat.py import lang, refine, fuzz
 
 
 class BadParameter(Exception):
     pass
 
 
-def is_valid_username(value: str) -> bool:
-    return all([c.isalpha() or c.isnumeric() or c == '-' for c in value]) and \
-        not value.startswith('-') and not value.endswith('-') and \
-        len(value) <= 38
+UsernameFormat = lang('UsernameFormat', """
+start: char{1,38};
+char: [a-z] | [A-Z] | [0-9] | "-";
+""")
+
+Username = refine(UsernameFormat, "not _.startswith('-') and not _.endswith('-')")
 
 
-def validate_username(value, field="username"):
+def validate_username(value: Username, field="username"):
     value = str(value).strip() if value else None
     if not value or not re.match(
             r"^[a-z\d](?:[a-z\d]|-(?=[a-z\d])){0,37}$", value, flags=re.I
@@ -58,11 +59,22 @@ def validate_email(value):
     return value
 
 
+PasswordFormat = lang('PasswordFormat', """
+start: char{8,};
+char: [0-9] | [A-Z] | [a-z] | "-";
+""")
+
+
 def is_valid_password(value: str) -> bool:
-    return len(value) >= 8 and any([c.isdigit() for c in value]) and any([c.islower() for c in value])
+    return any([c.isdigit() for c in value]) and any([c.islower() for c in value])
 
 
-def validate_password(value):
+Password = refine(PasswordFormat, 'is_valid_password(_)')
+
+
+def validate_password(value: Password):
+    ...
+
     value = str(value).strip() if value else None
     if not value or not re.match(r"^(?=.*[a-z])(?=.*\d).{8,}$", value):
         raise BadParameter(
@@ -73,14 +85,16 @@ def validate_password(value):
     return value
 
 
-def is_valid_team_name(value: str) -> bool:
-    return all([c.isalpha() or c.isnumeric() or c in {'-', '_', ' '} for c in value]) and \
-        not value.startswith('-') and not value.startswith('_') and \
-        not value.endswith('-') and not value.endswith('_') and \
-        len(value) <= 20
+TeamNameFormat = lang('TeamNameFormat', """
+start: char{1,20};
+char: [a-z] | [A-Z] | [0-9] | "-" | "_" | " ";
+""")
+
+TeamName = refine(TeamNameFormat, "not _.startswith('-') and not _.endswith('-') and not _.startswith('_') "
+                                  "and not _.endswith('_')")
 
 
-def validate_teamname(value):
+def validate_teamname(value: TeamName):
     value = str(value).strip() if value else None
     if not value or not re.match(
             r"^[a-z\d](?:[a-z\d]|[\-_ ](?=[a-z\d])){0,19}$", value, flags=re.I
@@ -95,16 +109,6 @@ def validate_teamname(value):
     return value
 
 
-OrgTeamFormat = lang('OrgTeamFormat', """
-start: org ":" team;
-org: [0-9a-zA-Z_]+;
-team: [0-9a-zA-Z_- ]+;
-""")
-
-OrgTeam = refine(OrgTeamFormat, lambda s: is_valid_username(select(xpath(OrgTeamFormat, '.org'), s)) and \
-                                          is_valid_team_name(select(xpath(OrgTeamFormat, '.team'), s)))
-
-
 def validate_orgname_teamname(value):
     value = str(value).strip() if value else None
     if not value or ":" not in value:
@@ -116,3 +120,9 @@ def validate_orgname_teamname(value):
     validate_orgname(orgname)
     validate_teamname(teamname)
     return value
+
+
+def main():
+    fuzz(validate_password, 100)
+    fuzz(validate_username, 100)
+    fuzz(validate_teamname, 100)

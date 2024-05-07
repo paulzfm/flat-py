@@ -121,6 +121,7 @@ class Instrumentor(ast.NodeTransformer):
         set_source = ast.parse(f'__source__ = "{source}"').body[0]
         tree.body.insert(0, import_runtime)
         tree.body.insert(1, set_source)
+        tree.body.insert(2, call_flat(load_source_module, ast.Name('__source__')))
         tree.body.append(call_flat(run_main, load('main')))
         ast.fix_missing_locations(tree)
         return ast.unparse(tree)
