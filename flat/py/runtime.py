@@ -2,6 +2,7 @@ import ast
 import importlib.util
 import inspect
 import sys
+import time
 from typing import Any, Callable, Generator, Optional
 
 from isla.solver import ISLaSolver
@@ -100,7 +101,7 @@ def product_producer(producers: list[Gen], test: Callable[[Any], bool]) -> Gen:
             yield values
 
 
-def fuzz(target: Callable, times: int, args_producer: Gen, verbose: bool = False) -> None:
+def fuzz(targets: list[Callable], times: int, args_producer: Gen, verbose: bool = False) -> None:
     # copy __source__, __line__ from the last frame
     frame = inspect.currentframe()
     back_frame = frame.f_back
@@ -108,21 +109,33 @@ def fuzz(target: Callable, times: int, args_producer: Gen, verbose: bool = False
         frame.f_locals['__line__'] = back_frame.f_locals['__line__']
         frame.f_globals['__source__'] = back_frame.f_globals['__source__']
 
+    passed = {target.__name__: 0 for target in targets}
+    total_time = {target.__name__: 0.0 for target in targets}
     for _ in range(times):
         inputs = next(args_producer)
-        try:
-            target(*inputs)
-        except Error as err:
-            cprint(f'[Error] {target.__name__}{tuple(inputs)}', 'red')
-            err.print()
-            continue
-        except Exception as exc:
-            cprint(f'[Error] {target.__name__}{tuple(inputs)}', 'red')
-            cprint('{}: {}'.format(type(exc).__name__, exc), 'red')
-            continue
-        else:
-            if verbose:
-                cprint(f'[OK] {target.__name__}{tuple(inputs)}', 'green')
+        for target in targets:
+            t = time.process_time()
+            try:
+                target(*inputs)
+            except Error as err:
+                total_time[target.__name__] += (time.process_time() - t) * 1000
+                cprint(f'[Error] {target.__name__}{tuple(inputs)}', 'red')
+                err.print()
+                continue
+            except Exception as exc:
+                total_time[target.__name__] += (time.process_time() - t) * 1000
+                cprint(f'[Error] {target.__name__}{tuple(inputs)}', 'red')
+                cprint('{}: {}'.format(type(exc).__name__, exc), 'red')
+                continue
+            else:
+                total_time[target.__name__] += (time.process_time() - t) * 1000
+                passed[target.__name__] += 1
+                if verbose:
+                    cprint(f'[OK] {target.__name__}{tuple(inputs)}', 'green')
+
+    print(f'=== Summary ===')
+    for target in targets:
+        print(f'{target.__name__}: {passed[target.__name__]}/{times} passed, {total_time[target.__name__]} ms')
 
 
 def run_main(main: Callable) -> None:

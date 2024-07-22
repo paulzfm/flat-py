@@ -13,6 +13,20 @@ class Loc:
     end_col_offset: int
 
 
+class InstrumentError(Error):
+    def __init__(self, message: str, filename: str, name: str, loc: Loc):
+        super().__init__(f'TypeError: {message}')
+        self.filename = filename
+        self.name = name
+        self.loc = loc
+
+    def get_stack_frame(self) -> list[FrameSummary]:
+        frame = FrameSummary(self.filename, self.loc.lineno, self.name,
+                             end_lineno=self.loc.end_lineno,
+                             colno=self.loc.col_offset, end_colno=self.loc.end_col_offset)
+        return [frame]
+
+
 def _extract_stack(exc: Exception, drop: int = 0) -> list[FrameSummary]:
     stack = list(walk_tb(exc.__traceback__))
     if drop > 0:

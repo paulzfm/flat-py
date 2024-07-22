@@ -100,6 +100,10 @@ def get_loc(node: ast.AST) -> ast.expr:
     return apply_flat(Loc, node.lineno, node.col_offset, node.end_lineno, node.end_col_offset)
 
 
+def loc_of(node: ast.AST) -> Loc:
+    return
+
+
 class Instrumentor(ast.NodeTransformer):
     def __init__(self) -> None:
         # self._inside_body = False
@@ -115,10 +119,14 @@ class Instrumentor(ast.NodeTransformer):
         tree = ast.parse(code)
         self._last_lineno = 0
         self._stack: list[FunContext] = []
-        self.visit(tree)
+        self.filename = source
+        try:
+            self.visit(tree)
+        except InstrumentError as err:
+            err.print()
 
         import_runtime = ast.parse('from flat.py import runtime as __flat__').body[0]
-        set_source = ast.parse(f'__source__ = "{source}"').body[0]
+        set_source = ast.parse(f'__source__ = "{self.filename}"').body[0]
         tree.body.insert(0, import_runtime)
         tree.body.insert(1, set_source)
         tree.body.insert(2, call_flat(load_source_module, ast.Name('__source__')))
@@ -145,6 +153,32 @@ class Instrumentor(ast.NodeTransformer):
     def fresh_name(self) -> str:
         self._next_id += 1
         return f'_{self._next_id}'
+
+    def error(self, message: str, at: ast.AST) -> InstrumentError:
+        loc = Loc(at.lineno, at.col_offset, at.end_lineno, at.end_col_offset)
+        if len(self._stack) == 0:
+            name = '<main>'
+        else:
+            name = self._stack[-1].fun.name
+        return InstrumentError(message, self.filename, name, loc)
+
+    def extract_arg(self, index: Optional[int], name: str, required: bool, from_call: ast.Call) -> Optional[ast.expr]:
+        # try args
+        if index is not None and len(from_call.args) > index:
+            for keyword in from_call.keywords:
+                if keyword.arg == name:  # conflict
+                    raise self.error(f"got multiple values for argument '{name}'", keyword)
+            return from_call.args[index]
+
+        # try keywords
+        for keyword in from_call.keywords:
+            if keyword.arg == name:
+                return keyword.value
+
+        # not found
+        if required:
+            raise self.error(f"missing required positional argument: '{name}'", from_call)
+        return None
 
     def visit_FunctionDef(self, node: ast.FunctionDef):
         # self._inside_body = True
@@ -302,26 +336,44 @@ class Instrumentor(ast.NodeTransformer):
         match node:
             case ast.Call(ast.Name('isinstance'), [obj, typ]) if self.expand(typ) is not None:
                 return apply_flat(has_type, obj, typ)
-            case ast.Call(ast.Name('fuzz'), [ast.Name(target), times, *args]) if self._env['fuzz'] == fuzz_annot:
-                if target in self._functions:
-                    fun = self._functions[target]
-                else:
-                    raise NameError(f'Undefined function: {target}')
+            case ast.Call(ast.Name('fuzz')) as call if self._env['fuzz'] == fuzz_annot:
+                match self.extract_arg(0, 'target', True, call):
+                    case ast.List(es):
+                        target_args = es
+                    case single:
+                        target_args = [single]
+
+                target_names = []
+                fun = None
+                for arg in target_args:
+                    match arg:
+                        case ast.Name(f):
+                            if f in self._functions:
+                                if fun is None:
+                                    fun = self._functions[f]
+                                target_names.append(f)
+                            else:
+                                raise self.error(f"target function '{f}' not found", arg)
+                        case _:
+                            raise self.error('expect a function name', arg)
+
+                times = self.extract_arg(1, 'times', True, call)
 
                 using: dict[str, ast.expr] = {}
-                match args:
-                    case []:
+                match self.extract_arg(None, 'using', False, call):
+                    case None:
                         pass
-                    case [ast.Dict(keys, values)]:
+                    case ast.Dict(keys, values):
                         for key, value in zip(keys, values):
                             match key:
                                 case ast.Constant(str() as x):
                                     using[x] = value
                                 case _:
-                                    raise TypeError
-                    case _:
-                        raise TypeError
-                return apply_flat(fuzz, load(target), times, self._producer(fun, using))
+                                    raise self.error('expect argument name', key)
+                    case other:
+                        raise self.error('expect dict', other)
+                return apply_flat(fuzz, ast.List([load(f) for f in target_names]),
+                                  times, self._producer(fun, using))
             case _:
                 return super().generic_visit(node)
 

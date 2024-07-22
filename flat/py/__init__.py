@@ -1,5 +1,4 @@
 import ast
-import sys
 from typing import Any, Callable, Generator
 
 import flat.parser
@@ -113,6 +112,6 @@ def returns(value: Any):
     return decorate
 
 
-def fuzz(target: Callable, times: int,
+def fuzz(target: Callable | list[Callable], times: int,
          using: Optional[dict[str, Generator[Any, None, None]]] = None) -> None:
     raise NotImplementedError

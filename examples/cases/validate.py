@@ -123,6 +123,6 @@ def validate_orgname_teamname(value):
 
 
 def main():
-    fuzz(validate_password, 100)
-    fuzz(validate_username, 100)
-    fuzz(validate_teamname, 100)
+    fuzz(validate_username, 1000)
+    fuzz(validate_password, 1000)
+    fuzz(validate_teamname, 1000)
