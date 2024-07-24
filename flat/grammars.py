@@ -7,7 +7,7 @@ from isla.helpers import is_valid_grammar
 from isla.solver import ISLaSolver, SemanticError
 from isla.type_defs import Grammar as ISLaGrammar
 
-from flat.ast import (Rule, Clause, Token, Symbol, CharSet, Rep, Seq, Alt, RepExactly, RepInRange, Lit, Ident)
+from flat.ast import (Rule, Clause, Token, Symbol, CharRange, Rep, Seq, Alt, RepExactly, RepInRange, Lit, Ident)
 
 
 class Grammar:
@@ -87,7 +87,7 @@ class GrammarBuilder:
 
         def check(clause: Clause) -> None:
             match clause:
-                case CharSet(Lit(lower), lit) as cs:
+                case CharRange(Lit(lower), lit) as cs:
                     if cs.end < cs.begin:
                         raise NameError(f"{cs.end} < {cs.begin} in clause {cs}")
                         # self.issuer.error(InvalidClause(f'this charactor (code={cs.end}) must > '
@@ -213,7 +213,7 @@ class GrammarBuilder:
                 return [text]
             case Symbol(Ident(name, _)):
                 return [f'<{name}>']
-            case CharSet() as cs:
+            case CharRange() as cs:
                 return [chr(code) for code in cs.get_range]
             case Rep(clause, rep_range):
                 match self._convert(clause):

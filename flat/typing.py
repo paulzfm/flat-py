@@ -54,7 +54,7 @@ class RefinementType(Type):
 
 
 @dataclass
-class FiniteType(Type):
+class LiteralType(Type):
     values: list[Any]
 
     def __str__(self) -> str:

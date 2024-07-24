@@ -60,5 +60,5 @@ def is_kinda_safe_path_neg(path: SensitivePath) -> Literal[False]:
 
 
 def main():
-    # fuzz(gpt_is_safe_path, times=1000)
-    fuzz(is_kinda_safe_path_neg, times=100)
+    fuzz(gpt_is_safe_path, times=1000)
+    fuzz(is_kinda_safe_path_neg, times=10)

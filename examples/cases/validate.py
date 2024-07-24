@@ -87,7 +87,7 @@ def validate_password(value: Password):
 
 TeamNameFormat = lang('TeamNameFormat', """
 start: char{1,20};
-char: [a-z] | [A-Z] | [0-9] | "-" | "_" | " ";
+char: [a-zA-Z0-9-_ ];
 """)
 
 TeamName = refine(TeamNameFormat, "not _.startswith('-') and not _.endswith('-') and not _.startswith('_') "

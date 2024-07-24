@@ -1,4 +1,5 @@
 # whitespaces and comments
+from string import digits, ascii_letters, punctuation
 from traceback import FrameSummary
 from typing import Any, Tuple
 
@@ -95,21 +96,25 @@ ident = with_pos(identifier).combine(Ident)
 
 terminal = string_lit.map(Token)
 nonterminal = ident.map(Symbol)
-char = with_pos(normal_char).combine(Lit)
-char_set = bracket(seq(char, token('-') >> char)).combine(CharSet)
+
+char = with_pos(char_from(digits + ascii_letters +
+                          ''.join(set(punctuation) - {'[', ']'}) + ' ')).combine(Lit)
+char_range = seq(char, token('-') >> char).combine(CharRange)
+charset_elem = char_range | char.map(Token)
+charset = bracket(charset_elem.at_least(1)).map(lambda cs: cs[0] if len(cs) == 1 else Alt(cs))
 
 # RFC extensions
 dec_char = int_lit.map(lambda lit: Lit(chr(lit.value), lit.pos))
 hex_char = with_pos(hex_integer).combine(Lit).map(lambda lit: Lit(chr(lit.value), lit.pos))
-rfc_char_set = alt(
+rfc_charset = alt(
     token('%d') >> seq(dec_char, (token('-') >> dec_char).optional()).combine(
         lambda n1, n2: (n1, n2 if n2 else n1)),
     token('%x') >> seq(hex_char, (token('-') >> hex_char).optional()).combine(
         lambda n1, n2: (n1, n2 if n2 else n1)),
-).combine(CharSet)
+).combine(CharRange)
 
 clause = forward_declaration()
-simple_clause = terminal | nonterminal | char_set | rfc_char_set | paren(clause)
+simple_clause = terminal | nonterminal | charset | rfc_charset | paren(clause)
 
 rep_range = alt(
     token('*').result(RepStar()),

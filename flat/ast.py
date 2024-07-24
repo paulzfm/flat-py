@@ -32,7 +32,7 @@ class Symbol(Clause):
 
 
 @dataclass
-class CharSet(Clause):
+class CharRange(Clause):
     lhs: Lit  # char
     rhs: Lit  # char
 
