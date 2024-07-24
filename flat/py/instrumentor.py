@@ -2,7 +2,7 @@ from flat.py import fuzz as fuzz_annot, PyCond
 from flat.py.rewrite import cnf, ISLaConvertor, free_vars, subst
 from flat.py.runtime import *
 from flat.py.utils import classify
-from flat.typing import Type, RefinementType
+from flat.typing import Type, RefinementType, FiniteType
 
 
 @dataclass(frozen=True)
@@ -147,7 +147,10 @@ class Instrumentor(ast.NodeTransformer):
         match eval(ast.unparse(annot), {}, self._env):
             case Type() as t:
                 return t
-            case _:
+            case other:  # may be literal type
+                values = get_args(other)
+                if len(values) > 0:
+                    return FiniteType(values)
                 return None
 
     def fresh_name(self) -> str:
@@ -428,6 +431,8 @@ class Instrumentor(ast.NodeTransformer):
         for x, typ, annot in fun.params:
             if x in using_producers:
                 producers += [using_producers[x]]
+            elif isinstance(typ, FiniteType):
+                producers += [apply_flat(choice_generator, ast.List([ast.Constant(v) for v in typ.values]))]
             elif typ and typ.is_lang_type:  # synthesize an isla producer
                 formulae: list[str] = []  # conjuncts that isla can solve
                 test_conditions: list[ast.expr] = []  # other conjuncts: fall back to Python

@@ -3,7 +3,7 @@ import importlib.util
 import inspect
 import sys
 import time
-from typing import Any, Callable, Generator, Optional
+from typing import Any, Callable, Generator, Optional, get_args
 
 from isla.solver import ISLaSolver
 from termcolor import cprint
@@ -20,18 +20,22 @@ def load_source_module(path: str) -> None:
     spec.loader.exec_module(source_module)
 
 
-def has_type(obj: Any, expected: Type) -> bool:
-    match obj:
-        case (int() | bool() | str()) as v:
-            return value_has_type(v, expected)
-        case list() as xs:
-            match expected:
-                case ListType(t):
-                    return all(has_type(x, t) for x in xs)
-                case _:
-                    return False
-        case _:
-            raise RuntimeError(f'cannot check type for object {obj} with type {type(obj)}')
+def has_type(obj: Any, expected: Any) -> bool:
+    if isinstance(expected, Type):
+        match obj:
+            case (int() | bool() | str()) as v:
+                return value_has_type(v, expected)
+            case list() as xs:
+                match expected:
+                    case ListType(t):
+                        return all(has_type(x, t) for x in xs)
+                    case _:
+                        return False
+            case _:
+                raise RuntimeError(f'cannot check type for object {obj} with type {type(obj)}')
+    else:  # Literal
+        values = get_args(expected)
+        return obj in values
 
 
 def assert_type(value: Any, value_loc: Loc, expected_type: Type):
@@ -71,6 +75,11 @@ def constant_generator(value: Any) -> Gen:
         yield value
 
 
+def choice_generator(choices: list[Any]) -> Gen:
+    for value in choices:
+        yield value
+
+
 def isla_generator(typ: LangType, formula: Optional[str] = None) -> Gen:
     assert typ is not None
     volume = 10
@@ -89,14 +98,20 @@ def isla_generator(typ: LangType, formula: Optional[str] = None) -> Gen:
 
 def producer(generator: Gen, test: Callable[[Any], bool]) -> Gen:
     while True:
-        value = next(generator)
+        try:
+            value = next(generator)
+        except StopIteration:
+            break
         if test(value):
             yield value
 
 
 def product_producer(producers: list[Gen], test: Callable[[Any], bool]) -> Gen:
     while True:
-        values = [next(p) for p in producers]
+        try:
+            values = [next(p) for p in producers]
+        except StopIteration:
+            break
         if test(*values):
             yield values
 
@@ -111,8 +126,13 @@ def fuzz(targets: list[Callable], times: int, args_producer: Gen, verbose: bool 
 
     passed = {target.__name__: 0 for target in targets}
     total_time = {target.__name__: 0.0 for target in targets}
-    for _ in range(times):
-        inputs = next(args_producer)
+    for i in range(times):
+        try:
+            inputs = next(args_producer)
+        except StopIteration:
+            times = i
+            break
+
         for target in targets:
             t = time.process_time()
             try:
@@ -126,6 +146,10 @@ def fuzz(targets: list[Callable], times: int, args_producer: Gen, verbose: bool 
                 total_time[target.__name__] += (time.process_time() - t) * 1000
                 cprint(f'[Error] {target.__name__}{tuple(inputs)}', 'red')
                 cprint('{}: {}'.format(type(exc).__name__, exc), 'red')
+                continue
+            except SystemExit:
+                total_time[target.__name__] += (time.process_time() - t) * 1000
+                cprint(f'[Exited] {target.__name__}{tuple(inputs)}', 'red')
                 continue
             else:
                 total_time[target.__name__] += (time.process_time() - t) * 1000

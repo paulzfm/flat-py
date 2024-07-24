@@ -1,6 +1,7 @@
 import abc
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any
 
 from flat.grammars import Grammar
 
@@ -50,6 +51,14 @@ class RefinementType(Type):
 
     def __str__(self) -> str:
         return '{' + f'{self.base} | {self.cond}' + '}'
+
+
+@dataclass
+class FiniteType(Type):
+    values: list[Any]
+
+    def __str__(self) -> str:
+        return 'Literal[' + ', '.join(map(str, self.values)) + ']'
 
 
 @dataclass
