@@ -25,7 +25,7 @@ class BadParameter(Exception):
 
 UsernameFormat = lang('UsernameFormat', """
 start: char{1,38};
-char: [a-z] | [A-Z] | [0-9] | "-";
+char: [a-zA-Z0-9-];
 """)
 
 Username = refine(UsernameFormat, "not _.startswith('-') and not _.endswith('-')")
@@ -61,7 +61,7 @@ def validate_email(value):
 
 PasswordFormat = lang('PasswordFormat', """
 start: char{8,};
-char: [0-9] | [A-Z] | [a-z] | "-";
+char: [0-9A-Za-z-];
 """)
 
 

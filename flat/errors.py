@@ -1,4 +1,3 @@
-import sys
 from traceback import FrameSummary
 from traceback import StackSummary
 from typing import Optional
@@ -23,10 +22,10 @@ class Error(RuntimeError):
 
     def print(self) -> None:
         stack_summary = StackSummary.from_list(self.get_stack_frame())
-        print('Traceback (most recent call last):', file=sys.stderr, flush=True)
+        print('Traceback (most recent call last):', flush=True)
         for line in stack_summary.format():
-            print(line, end='', file=sys.stderr, flush=True)
-        print(str(self), file=sys.stderr, flush=True)
+            print(line, end='', flush=True)
+        print(str(self), flush=True)
 
 
 class ParsingError(Error):

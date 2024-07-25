@@ -97,3 +97,17 @@ class PostconditionViolated(Error):
                                     colno=self.loc.col_offset, end_colno=self.loc.end_col_offset)
         summaries.insert(-1, return_frame)
         return summaries
+
+
+class NoExpectedException(Error):
+    def __init__(self, exc_type: type[BaseException], loc: Loc):
+        super().__init__(f'No expected exception was raised: {exc_type.__name__}', [])
+        self.loc = loc
+
+    def get_stack_frame(self) -> list[FrameSummary]:
+        summaries = _extract_stack(self, 2)
+        raise_frame = FrameSummary(summaries[-1].filename, self.loc.lineno, summaries[-1].name,
+                                   end_lineno=self.loc.end_lineno,
+                                   colno=self.loc.col_offset, end_colno=self.loc.end_col_offset)
+        summaries.append(raise_frame)
+        return summaries

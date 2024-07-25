@@ -112,6 +112,16 @@ def returns(value: Any):
     return decorate
 
 
+def raise_if(exc: type[BaseException], cond: Any):
+    def decorate(func):
+        def decorated(*args, **kwargs):
+            return func(*args, **kwargs)  # identity
+
+        return decorated
+
+    return decorate
+
+
 def fuzz(target: Callable | list[Callable], times: int,
          using: Optional[dict[str, Generator[Any, None, None]]] = None) -> None:
     raise NotImplementedError

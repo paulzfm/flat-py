@@ -219,6 +219,7 @@ class Instrumentor(ast.NodeTransformer):
         # check specifications
         preconditions: list[ast.expr] = []
         postconditions: list[ast.expr] = []
+        exc_info: list[ast.Tuple] = []  # cond_var name, exc_type, loc
         processed: list[ast.expr] = []
         arg_names = [x for x, _, _ in params]
         for decorator in node.decorator_list:
@@ -241,6 +242,14 @@ class Instrumentor(ast.NodeTransformer):
                     post.lineno = decorator.lineno
                     postconditions.append(post)
                     processed.append(decorator)  # to remove it
+                case ast.Call(ast.Name('raise_if')) as call:
+                    exc_type = self.extract_arg(0, 'exc', True, call)
+                    cond = canonical_cond(self.extract_arg(1, 'cond', True, call), arg_names)
+                    cond_var = f'__exc_cond_{len(exc_info)}__'
+                    body += [assign(cond_var, cond)]
+                    exc_info.append(ast.Tuple([load(cond_var), exc_type, get_loc(decorator)]))
+                    processed.append(decorator)  # to remove it
+
         for x in processed:
             node.decorator_list.remove(x)
 
@@ -249,15 +258,25 @@ class Instrumentor(ast.NodeTransformer):
         self._functions[node.name] = sig
 
         # transform body
+        if len(exc_info) > 0:  # need wrap
+            body_buffer = []
+        else:  # no wrap
+            body_buffer = body
+
         self._stack.append(FunContext(sig, annots))
         for stmt in node.body:
             match self.visit(stmt):
                 case ast.stmt() as s:
-                    body.append(s)
+                    body_buffer.append(s)
                 case list() as ss:
-                    body += ss
+                    body_buffer += ss
         self._stack.pop()
 
+        if len(exc_info) > 0:
+            handler = apply_flat(ExpectExceptions, ast.List([t for t in exc_info]))
+            with_item = ast.withitem(handler)
+            with_stmt = ast.With([with_item], body_buffer, type_ignores=[])
+            body.append(with_stmt)
         node.body = body
         return node
 
@@ -432,7 +451,10 @@ class Instrumentor(ast.NodeTransformer):
             if x in using_producers:
                 producers += [using_producers[x]]
             elif isinstance(typ, LiteralType):
-                producers += [apply_flat(choice_generator, ast.List([ast.Constant(v) for v in typ.values]))]
+                if len(typ.values) == 1:
+                    producers += [apply_flat(constant_generator, typ.values[0])]
+                else:
+                    producers += [apply_flat(choice_generator, ast.List([ast.Constant(v) for v in typ.values]))]
             elif typ and typ.is_lang_type:  # synthesize an isla producer
                 formulae: list[str] = []  # conjuncts that isla can solve
                 test_conditions: list[ast.expr] = []  # other conjuncts: fall back to Python

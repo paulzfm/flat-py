@@ -3,6 +3,7 @@ import importlib.util
 import inspect
 import sys
 import time
+from types import TracebackType
 from typing import Any, Callable, Generator, Optional, get_args
 
 from isla.solver import ISLaSolver
@@ -57,6 +58,33 @@ def assert_post(cond: bool, args: list[Tuple[str, Any]], return_value: Any, retu
     if not cond:
         raise PostconditionViolated(of_method, [(name, show_value(v)) for name, v in args],
                                     show_value(return_value), return_value_loc)
+
+
+class ExpectExceptions:
+    def __init__(self, exc_info: list[Tuple[bool, type[BaseException], Loc]]) -> None:
+        """Expect a specified type of exception if its condition is held.
+        Assuming the conditions are disjoint."""
+        self.expected_type: Optional[type] = None
+        self.loc: Optional[Loc] = None
+
+        for b, exc_type, loc in exc_info:
+            if b:
+                self.expected_type = exc_type
+                self.loc = loc
+                break
+
+    def __enter__(self) -> Any:
+        return self
+
+    def __exit__(self, exc_type: type, exc_value: BaseException, tb: TracebackType) -> bool:
+        if self.expected_type is not None:
+            if exc_type is self.expected_type:
+                return True  # success, ignore exc
+            # failure: raise another error
+            raise NoExpectedException(self.expected_type, self.loc)
+
+        # no expected error: handle normally
+        return False
 
 
 def show_value(value: Any):
