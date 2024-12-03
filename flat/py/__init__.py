@@ -1,5 +1,6 @@
 import ast
-from typing import Any, Callable, Generator
+from dataclasses import dataclass
+from typing import Any, Callable, Generator, Tuple, Literal
 
 import flat.parser
 from flat.types import *
@@ -13,6 +14,8 @@ class LangBuilder(GrammarBuilder):
                 return RFC_Email.grammar
             case 'RFC_URL':
                 return RFC_URL.grammar
+            case 'RFC_Host':
+                return RFC_Host.grammar
             case _:
                 try:
                     value = eval(name)
@@ -122,6 +125,14 @@ def raise_if(exc: type[BaseException], cond: Any):
     return decorate
 
 
-def fuzz(target: Callable | list[Callable], times: int,
-         using: Optional[dict[str, Generator[Any, None, None]]] = None) -> None:
+@dataclass(frozen=True)
+class FuzzReport:
+    target: str
+    records: list[Tuple[Any, Literal['Error', 'Exited', 'OK']]]
+    producer_time: float
+    checker_time: float
+
+
+def fuzz(target: Callable, times: int,
+         using: Optional[dict[str, Generator[Any, None, None]]] = None) -> FuzzReport:
     raise NotImplementedError

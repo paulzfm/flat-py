@@ -170,7 +170,12 @@ class GrammarBuilder:
 
         return clauses
 
-    def __call__(self, name: str, rules: list[Rule]) -> Grammar:
+    def __call__(self, name: str, rules: list[Rule], start: str = 'start') -> Grammar:
+        if start != 'start':
+            for rule in rules:
+                if rule.name == 'start':
+                    rule.body = Symbol(Ident(start, None))
+
         grammar = self.validate(rules)
         clauses = self.reduce(grammar)
 

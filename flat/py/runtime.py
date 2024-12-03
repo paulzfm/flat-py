@@ -7,8 +7,8 @@ from types import TracebackType
 from typing import Any, Callable, Generator, Optional, get_args
 
 from isla.solver import ISLaSolver
-from termcolor import cprint
 
+from flat.py import FuzzReport
 from flat.py.errors import *
 from flat.py.isla_extensions import *
 from flat.typing import Type, value_has_type, LangType, ListType
@@ -144,7 +144,7 @@ def product_producer(producers: list[Gen], test: Callable[[Any], bool]) -> Gen:
             yield values
 
 
-def fuzz(targets: list[Callable], times: int, args_producer: Gen, verbose: bool = False) -> None:
+def fuzz(target: Callable, times: int, args_producer: Gen, verbose: bool = False) -> FuzzReport:
     # copy __source__, __line__ from the last frame
     frame = inspect.currentframe()
     back_frame = frame.f_back
@@ -152,42 +152,42 @@ def fuzz(targets: list[Callable], times: int, args_producer: Gen, verbose: bool 
         frame.f_locals['__line__'] = back_frame.f_locals['__line__']
         frame.f_globals['__source__'] = back_frame.f_globals['__source__']
 
-    passed = {target.__name__: 0 for target in targets}
-    total_time = {target.__name__: 0.0 for target in targets}
+    producer_time = 0.0
+    exe_time = 0.0
+    records = []
     for i in range(times):
         try:
+            t = time.process_time()
             inputs = next(args_producer)
+            producer_time += (time.process_time() - t)
         except StopIteration:
-            times = i
             break
 
-        for target in targets:
-            t = time.process_time()
-            try:
-                target(*inputs)
-            except Error as err:
-                total_time[target.__name__] += (time.process_time() - t) * 1000
-                cprint(f'[Error] {target.__name__}{tuple(inputs)}', 'red')
-                err.print()
-                continue
-            except Exception as exc:
-                total_time[target.__name__] += (time.process_time() - t) * 1000
-                cprint(f'[Error] {target.__name__}{tuple(inputs)}', 'red')
-                cprint('{}: {}'.format(type(exc).__name__, exc), 'red')
-                continue
-            except SystemExit:
-                total_time[target.__name__] += (time.process_time() - t) * 1000
-                cprint(f'[Exited] {target.__name__}{tuple(inputs)}', 'red')
-                continue
-            else:
-                total_time[target.__name__] += (time.process_time() - t) * 1000
-                passed[target.__name__] += 1
-                if verbose:
-                    cprint(f'[OK] {target.__name__}{tuple(inputs)}', 'green')
+        t = time.process_time()
+        try:
+            target(*inputs)
+        except Error as err:
+            exe_time += (time.process_time() - t)
+            records.append((tuple(inputs), 'Error'))
+            # cprint(f'[Error] {target.__name__}{tuple(inputs)}', 'red')
+            # err.print()
+        except Exception as exc:
+            exe_time += (time.process_time() - t)
+            records.append((tuple(inputs), 'Error'))
+            # cprint(f'[Error] {target.__name__}{tuple(inputs)}', 'red')
+            # cprint('{}: {}'.format(type(exc).__name__, exc), 'red')
+        except SystemExit:
+            exe_time += (time.process_time() - t)
+            records.append((tuple(inputs), 'Exited'))
+            # cprint(f'[Exited] {target.__name__}{tuple(inputs)}', 'red')
+        else:
+            exe_time += (time.process_time() - t)
+            records.append((tuple(inputs), 'OK'))
+            # if verbose:
+            #     cprint(f'[OK] {target.__name__}{tuple(inputs)}', 'green')
 
-    print(f'=== Summary ===')
-    for target in targets:
-        print(f'{target.__name__}: {passed[target.__name__]}/{times} passed, {total_time[target.__name__]} ms')
+    # print(f'{target.__name__}: {passed[target.__name__]}/{times} passed, {total_time[target.__name__]} ms')
+    return FuzzReport(target.__name__, records, producer_time, exe_time)
 
 
 def run_main(main: Callable) -> None:

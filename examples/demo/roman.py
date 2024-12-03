@@ -5,6 +5,7 @@ from string_utils.manipulation import __RomanNumbers
 
 from flat.py import requires, lang, fuzz, refine
 from flat.py.runtime import isla_generator
+from flat.py.utils import print_fuzz_report
 
 RomanSyntax = lang('RomanSyntax', """
 start: thousand? hundred? tens? units?;
@@ -65,8 +66,11 @@ def number_gen():
 
 
 def main():
-    fuzz(roman_encode, 100, {'input_number': number_gen()})
-    fuzz(roman_decode, 100)
+    report = fuzz(roman_encode, 100, using={'input_number': number_gen()})
+    print_fuzz_report(report)
+
+    report = fuzz(roman_decode, 100)
+    print_fuzz_report(report)
 
     g = number_gen()
     for _ in range(100):

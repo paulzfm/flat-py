@@ -7,6 +7,7 @@ from string_utils.validation import is_string, is_camel_case, is_snake_case, is_
 from flat.lib import select_all, xpath, select
 from flat.py import lang, fuzz, ensures
 from flat.py.runtime import constant_generator
+from flat.py.utils import print_fuzz_report
 
 CamelCase = lang('CamelCase', """
 start: first rest+;
@@ -147,9 +148,20 @@ def marko_camel_to_snake(name: CamelCase) -> SnakeCase:
 
 
 def main():
-    fuzz(python_string_camel_to_snake, 20)
-    fuzz(sertit_camel_to_snake, 20)
-    fuzz(marko_camel_to_snake, 20)
-    fuzz(python_string_snake_to_camel, 20)
-    fuzz(python_string_snake_to_camel, 20, {'upper_case_first': constant_generator(False)})
-    fuzz(sertit_snake_to_camel, 20)
+    report = fuzz(python_string_camel_to_snake, 20)
+    print_fuzz_report(report)
+
+    report = fuzz(sertit_camel_to_snake, 20)
+    print_fuzz_report(report)
+
+    report = fuzz(marko_camel_to_snake, 20)
+    print_fuzz_report(report)
+
+    report = fuzz(python_string_snake_to_camel, 20)
+    print_fuzz_report(report)
+
+    report = fuzz(python_string_snake_to_camel, 20, {'upper_case_first': constant_generator(False)})
+    print_fuzz_report(report)
+
+    report = fuzz(sertit_snake_to_camel, 20)
+    print_fuzz_report(report)

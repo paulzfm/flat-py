@@ -1,3 +1,5 @@
+from typing import get_origin, Literal
+
 from flat.py import fuzz as fuzz_annot, PyCond
 from flat.py.rewrite import cnf, ISLaConvertor, free_vars, subst
 from flat.py.runtime import *
@@ -100,10 +102,6 @@ def get_loc(node: ast.AST) -> ast.expr:
     return apply_flat(Loc, node.lineno, node.col_offset, node.end_lineno, node.end_col_offset)
 
 
-def loc_of(node: ast.AST) -> Loc:
-    return
-
-
 class Instrumentor(ast.NodeTransformer):
     def __init__(self) -> None:
         # self._inside_body = False
@@ -145,11 +143,13 @@ class Instrumentor(ast.NodeTransformer):
 
     def expand(self, annot: ast.expr) -> Optional[Type]:
         match eval(ast.unparse(annot), {}, self._env):
-            case Type() as t:
-                return t
-            case other:  # may be literal type
-                values = get_args(other)
-                if len(values) > 0:
+            case Type() as typ:
+                return typ
+            case other:
+                if get_origin(other) is Literal:  # literal type
+                    values = get_args(other)
+                    assert len(values) > 0
+                    assert all(isinstance(v, int) or isinstance(v, bool) or isinstance(v, str) for v in values)
                     return LiteralType(values)
                 return None
 
@@ -359,25 +359,17 @@ class Instrumentor(ast.NodeTransformer):
             case ast.Call(ast.Name('isinstance'), [obj, typ]) if self.expand(typ) is not None:
                 return apply_flat(has_type, obj, typ)
             case ast.Call(ast.Name('fuzz')) as call if self._env['fuzz'] == fuzz_annot:
-                match self.extract_arg(0, 'target', True, call):
-                    case ast.List(es):
-                        target_args = es
-                    case single:
-                        target_args = [single]
-
-                target_names = []
                 fun = None
-                for arg in target_args:
-                    match arg:
-                        case ast.Name(f):
-                            if f in self._functions:
-                                if fun is None:
-                                    fun = self._functions[f]
-                                target_names.append(f)
-                            else:
-                                raise self.error(f"target function '{f}' not found", arg)
-                        case _:
-                            raise self.error('expect a function name', arg)
+                target = self.extract_arg(0, 'target', True, call)
+                match target:
+                    case ast.Name(f):
+                        if f in self._functions:
+                            if fun is None:
+                                fun = self._functions[f]
+                        else:
+                            raise self.error(f"target function '{f}' not found", target)
+                    case _:
+                        raise self.error('expect a function name', target)
 
                 times = self.extract_arg(1, 'times', True, call)
 
@@ -394,8 +386,7 @@ class Instrumentor(ast.NodeTransformer):
                                     raise self.error('expect argument name', key)
                     case other:
                         raise self.error('expect dict', other)
-                return apply_flat(fuzz, ast.List([load(f) for f in target_names]),
-                                  times, self._producer(fun, using))
+                return apply_flat(fuzz, target, times, self._producer(fun, using))
             case _:
                 return super().generic_visit(node)
 
@@ -450,11 +441,8 @@ class Instrumentor(ast.NodeTransformer):
         for x, typ, annot in fun.params:
             if x in using_producers:
                 producers += [using_producers[x]]
-            elif isinstance(typ, LiteralType):
-                if len(typ.values) == 1:
-                    producers += [apply_flat(constant_generator, typ.values[0])]
-                else:
-                    producers += [apply_flat(choice_generator, ast.List([ast.Constant(v) for v in typ.values]))]
+            elif x in fun.defaults:  # use default value
+                producers += [apply_flat(constant_generator, fun.defaults[x])]
             elif typ and typ.is_lang_type:  # synthesize an isla producer
                 formulae: list[str] = []  # conjuncts that isla can solve
                 test_conditions: list[ast.expr] = []  # other conjuncts: fall back to Python
@@ -493,8 +481,11 @@ class Instrumentor(ast.NodeTransformer):
                                apply_flat(isla_generator, annot, formula),
                                lambda_expr(['_'], conjunction(test_conditions)))
                 ]
-            elif x in fun.defaults:  # use default value
-                producers += [apply_flat(constant_generator, fun.defaults[x])]
+            elif isinstance(typ, LiteralType):
+                if len(typ.values) == 1:
+                    producers += [apply_flat(constant_generator, typ.values[0])]
+                else:
+                    producers += [apply_flat(choice_generator, ast.List([ast.Constant(v) for v in typ.values]))]
             else:
                 raise TypeError(f'must specify producer for param {x}, specified are {using_producers}')
 

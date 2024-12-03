@@ -1,4 +1,5 @@
-from flat.py import *
+from flat.py import lang, requires, fuzz
+from flat.py.utils import print_fuzz_report
 
 Lit = lang('Lit', """
 start: list;
@@ -34,8 +35,17 @@ def list_first_elem_all_int_elem_pos(lit: Lit) -> int:
 
 
 def main():
-    fuzz(all_int_pos, 10)
-    fuzz(all_int_elem_pos, 10)
-    fuzz(list_all_elem_pos, 10)
-    fuzz(list_first_elem_all_int_pos, 10)
-    fuzz(list_first_elem_all_int_elem_pos, 10)
+    report = fuzz(all_int_pos, 10)
+    print_fuzz_report(report)
+
+    report = fuzz(all_int_elem_pos, 10)
+    print_fuzz_report(report)
+
+    report = fuzz(list_all_elem_pos, 10)
+    print_fuzz_report(report)
+
+    report = fuzz(list_first_elem_all_int_pos, 10)
+    print_fuzz_report(report)
+
+    report = fuzz(list_first_elem_all_int_elem_pos, 10)
+    print_fuzz_report(report)

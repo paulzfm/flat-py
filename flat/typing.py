@@ -1,7 +1,7 @@
 import abc
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any
+from typing import Union
 
 from flat.grammars import Grammar
 
@@ -55,7 +55,7 @@ class RefinementType(Type):
 
 @dataclass
 class LiteralType(Type):
-    values: list[Any]
+    values: list[Union[int, bool, str]]
 
     def __str__(self) -> str:
         return 'Literal[' + ', '.join(map(str, self.values)) + ']'

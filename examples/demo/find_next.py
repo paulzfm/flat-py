@@ -5,6 +5,7 @@ from typing import Container
 from flat.lib import implies
 from flat.py import ensures, fuzz
 from flat.py.runtime import constant_generator
+from flat.py.utils import print_fuzz_report
 
 
 @ensures(lambda s, t, start, end, dis, i: implies(i == -1, t == "" or t not in s))
@@ -51,4 +52,5 @@ def text_producer(max_len: int = 25):
 
 
 def main():
-    fuzz(find_next, 500, {'text': text_producer(), 'target': constant_generator('\n')})
+    report = fuzz(find_next, 2000, using={'text': text_producer(), 'target': constant_generator('\n')})
+    print_fuzz_report(report)

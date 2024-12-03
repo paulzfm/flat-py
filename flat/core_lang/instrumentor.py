@@ -1,5 +1,3 @@
-from typing import Any
-
 from flat.core_lang.ast import *
 from flat.core_lang.cond import CoreCond
 from flat.core_lang.errors import *
