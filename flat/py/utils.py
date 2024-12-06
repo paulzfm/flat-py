@@ -1,7 +1,9 @@
 import time
 from io import TextIOWrapper
-from typing import TypeVar, Callable, Tuple
+from types import TracebackType
+from typing import TypeVar, Callable, Tuple, Any
 
+from flat.errors import Error
 from flat.py import FuzzReport
 
 T = TypeVar('T')
@@ -17,6 +19,19 @@ def classify(f: Callable[[T], bool], xs: list[T]) -> Tuple[list[T], list[T]]:
             failed.append(x)
 
     return passed, failed
+
+
+class ExpectError:
+    def __enter__(self) -> Any:
+        return self
+
+    def __exit__(self, exc_type: type, exc_value: BaseException, tb: TracebackType) -> bool:
+        if isinstance(exc_value, Error):
+            print('(Expected error)')
+            exc_value.print()
+            return True
+
+        return False
 
 
 def print_fuzz_report(report: FuzzReport) -> None:

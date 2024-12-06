@@ -14,8 +14,10 @@ class LangBuilder(GrammarBuilder):
                 return RFC_Email.grammar
             case 'RFC_URL':
                 return RFC_URL.grammar
-            case 'RFC_Host':
-                return RFC_Host.grammar
+            case 'Host':
+                return Host.grammar
+            case 'URL':
+                return URL.grammar
             case _:
                 try:
                     value = eval(name)

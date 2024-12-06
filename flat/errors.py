@@ -26,6 +26,7 @@ class Error(RuntimeError):
         for line in stack_summary.format():
             print(line, end='', flush=True)
         print(str(self), flush=True)
+        print('')
 
 
 class ParsingError(Error):

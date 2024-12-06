@@ -1,9 +1,7 @@
-from flat.errors import Error
-from flat.lib import select
-from flat.py import lang, fuzz, ensures
-from flat.py.utils import print_fuzz_report
-from flat.types import RFC_Host as Host
-from flat.types import RFC_URL as URL
+from flat.lib import select, xpath
+from flat.py import lang, ensures, fuzz
+from flat.py.utils import ExpectError, print_fuzz_report
+from flat.types import Host, URL
 
 
 def get_hostname(url: str) -> str:
@@ -33,7 +31,7 @@ def save_hostname_1(url: str):
 
 
 SafeSQL = lang('SafeSQL', """
-start: "INSERT INTO hosts VALUES " "(" RFC_Host ")";
+start: "INSERT INTO hosts VALUES " "(" Host ")";
 """)
 
 
@@ -54,35 +52,38 @@ def get_hostname_fixed(url: URL) -> Host:
     return host
 
 
-@ensures(lambda url, ret: ret == select(URL.xpath("..host"), url))
+@ensures(lambda url, ret: ret == select(xpath(URL, "..host"), url))
 def get_hostname_oracle(url: URL) -> Host:
-    return get_hostname(url)
+    return get_hostname_fixed(url)
 
 
 def main():
-    print('== SQL injection ==')
+    print('== 2.1 Detecting SQL Injection ==')
     malicious_url = "https://localhost'); DROP TABLE users --/"
     save_hostname(malicious_url)
 
-    print('== Solution 1 ==')
-    try:
+    print('* Solution 1')
+    with ExpectError():
         save_hostname_1(malicious_url)
-    except Error as err:
-        err.print()
 
-    print('== Solution 2 ==')
-    try:
+    print('* Solution 2')
+    with ExpectError():
         save_hostname_2(malicious_url)
-    except Error as err:
-        err.print()
 
-    print('== Fuzz ==')
+    print('== 2.2 Language-Based Test Generation ==')
     report = fuzz(get_hostname_safe, 50)
     print_fuzz_report(report)
 
+    print('* Failing input shown in the paper')
+    with ExpectError():
+        get_hostname_safe('http://W')
+
+    assert get_hostname_fixed('http://W') == 'W'
+    print('* The fixed version solves this failing input and can pass other random inputs:')
     report = fuzz(get_hostname_fixed, 50)
     print_fuzz_report(report)
 
-    print('== Oracles ==')
+    print('== 2.3 Oracles ==')
+    print('* The fixed version meets the functional contract:')
     report = fuzz(get_hostname_oracle, 50)
     print_fuzz_report(report)
