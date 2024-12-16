@@ -1,3 +1,4 @@
+import argparse
 import os
 import sys
 
@@ -22,15 +23,13 @@ def instrument(file_path: str, out_dir: str):
         f.write(output)
 
 
-def print_usage():
-    print('Usage: python -m flat.py FILE')
-    sys.exit(1)
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(prog='flat.py')
+    parser.add_argument('INPUT_FILE', help='input files')
+    parser.add_argument('-o', '--output-dir', default='examples/out', help='output folder')
 
-
-if len(sys.argv) != 2:
-    print_usage()
-
-try:
-    instrument(sys.argv[1], 'examples/out')
-except Error as err:
-    err.print()
+    args = parser.parse_args()
+    try:
+        instrument(args.INPUT_FILE, args.output_dir)
+    except Error as err:
+        err.print()
