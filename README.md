@@ -141,9 +141,26 @@ which refers to the hostname part, in the derivation tree of `url`.
 
 For the full example, see `examples/demo/hostname.py`.
 
-## Getting Started
+## Build
 
-Python `>= 3.11` is required. No other dependencies need be installed first.
+### Option 1: Via Docker
+
+In the project root directory, build the image first:
+
+```shell
+docker build -t flat .
+```
+
+This can take a while. Once the image is successfully built, you can enter its bash shell:
+
+```shell
+docker run -it flat:latest
+```
+
+### Option 2: From Source
+
+Python `>= 3.11` is required.
+To compile `z3-solver` dependency of ISLa, you need `gcc`, `g++`, `make`, and `cmake`.
 
 We recommend setting up a virtual environment. In the project root directory:
 
@@ -155,10 +172,12 @@ source .venv/bin/activate
 Once you see the prompt `(.venv)` in your shell, execute the following to install FLAT-PY locally:
 
 ```shell
-pip install --upgrade pip
+pip install --upgrade pip setuptools
 pip install -r requirements.txt
 pip install .
 ```
+
+## Usage
 
 The basic usage is:
 
