@@ -157,7 +157,7 @@ This can take a while. Once the image is successfully built, you can enter its b
 docker run -it flat:latest
 ```
 
-### Option 2: From Source
+### Option 2: From Source (in Unix)
 
 Python `>= 3.11` is required.
 To compile `z3-solver` dependency of ISLa, you need `gcc`, `g++`, `make`, and `cmake`.
