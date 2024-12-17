@@ -1,0 +1,25 @@
+name: Build
+on: [ push ]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: [ "3.11", "3.12", "3.13" ]
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip setuptools
+          pip install --no-cache-dir -r requirements.txt
+          pip install .
+      - name: Install check
+        run: python -m flat.py -h
+      - name: Run demos
+        run: python run_demos.py
