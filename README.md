@@ -1,5 +1,7 @@
 # FLAT-PY: Formal Languages as Types, for Python
 
+[![BuildStatus](https://img.shields.io/github/actions/workflow/status/paulzfm/flat-py/build.yml?branch=main)](https://img.shields.io/github/actions/workflow/status/paulzfm/flat-py/build.yml?branch=main)
+
 String is a universal representation of many types of data,
 e.g., email addresses, URLs, Unix file paths, HTML, and JSON.
 These types of data are **conceptually different**, but all have a unified string type,
@@ -148,13 +150,13 @@ For the full example, see `examples/demo/hostname.py`.
 In the project root directory, build the image first:
 
 ```shell
-docker build -t flat .
+docker build -t flat-py .
 ```
 
 This can take a while. Once the image is successfully built, you can enter its bash shell:
 
 ```shell
-docker run -it flat:latest
+docker run -it flat-py:latest
 ```
 
 ### Option 2: From Source (in Unix)
