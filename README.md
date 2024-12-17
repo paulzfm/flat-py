@@ -1,6 +1,9 @@
 # FLAT-PY: Formal Languages as Types, for Python
 
-[![BuildStatus](https://img.shields.io/github/actions/workflow/status/paulzfm/flat-py/build.yml?branch=main)](https://img.shields.io/github/actions/workflow/status/paulzfm/flat-py/build.yml?branch=main)
+[![Build][build-badge]][build-link]
+
+[build-badge]: https://github.com/paulzfm/flat-py/actions/workflows/build.yml/badge.svg?branch=main
+[build-link]: https://github.com/paulzfm/flat-py/actions/workflows/build.yml
 
 String is a universal representation of many types of data,
 e.g., email addresses, URLs, Unix file paths, HTML, and JSON.
